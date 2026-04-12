@@ -1,0 +1,24 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Data & outputs (large / licensed — do not commit)
+data/*.parquet
+data/*.csv
+data/*.csv.gz
+*.parquet
+checkpoints/
+
+# Secrets
+.env
+*.pem
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
