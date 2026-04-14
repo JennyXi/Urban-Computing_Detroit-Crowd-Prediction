@@ -9,6 +9,7 @@ __pycache__/
 # Data & outputs (large / licensed — do not commit)
 data/*.parquet
 data/*.csv
+!data/autoformer_weekly_preprocessed.csv
 data/*.csv.gz
 *.parquet
 checkpoints/

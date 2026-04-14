@@ -1,25 +1,49 @@
 """
 Filter local Dewey Weekly Patterns (or similar) rows where CITY is Detroit.
 
-Adjust INPUT_GLOB / column names if your Data Dictionary differs.
+Usage (CMD, with .venv activated and duckdb installed):
+  python scripts/filter_detroit_duckdb.py --input "D:\\data\\michigan\\*.csv.gz" --output data\\detroit.parquet
+  python scripts/filter_detroit_duckdb.py --input "D:\\data\\michigan\\*.parquet" --format parquet
+
+Defaults below match the original Try_0412 paths; override with --input/--output.
 """
 
+from __future__ import annotations
+
+import argparse
 from pathlib import Path
 
 import duckdb
 
-# Folder where your downloaded *.csv.gz or *.parquet live
-INPUT_GLOB = r"E:\Urban Computing Final Project\dewey-downloads\jenny-try-0412\*.csv.gz"
-
-# Output: single Parquet file (change if you prefer a folder)
-OUTPUT_PARQUET = r"E:\Urban Computing Final Project\Try_0412\data\detroit_filtered.parquet"
+DEFAULT_INPUT_GLOB = r"E:\Urban Computing Final Project\dewey-downloads\jenny-try-0412\*.csv.gz"
+DEFAULT_OUTPUT = r"E:\Urban Computing Final Project\Try_0412\data\detroit_filtered.parquet"
 
 
 def main() -> None:
-    out = Path(OUTPUT_PARQUET)
+    parser = argparse.ArgumentParser(description="Filter rows to CITY=Detroit with DuckDB.")
+    parser.add_argument(
+        "--input",
+        default=DEFAULT_INPUT_GLOB,
+        help="Glob of local files, e.g. D:\\\\michigan\\\\*.csv.gz or ...\\\\*.parquet",
+    )
+    parser.add_argument(
+        "--output",
+        default=DEFAULT_OUTPUT,
+        help="Output Parquet path.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("csv_gz", "parquet"),
+        default="csv_gz",
+        help="Input file type (default: gzip CSV shards).",
+    )
+    args = parser.parse_args()
+
+    input_glob = args.input
+    out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    print("Input glob:", INPUT_GLOB, flush=True)
+    print("Input glob:", input_glob, flush=True)
     print("Output file:", out, flush=True)
     print(
         "Running DuckDB (scan + filter + write). Large folders may take many minutes; "
@@ -29,14 +53,16 @@ def main() -> None:
 
     con = duckdb.connect(database=":memory:")
 
-    # If your files are Parquet instead of gzip CSV, swap the FROM clause below to:
-    #   FROM read_parquet($pattern, union_by_name=true)
-    # and set INPUT_GLOB to .../*.parquet
+    if args.format == "csv_gz":
+        from_clause = "read_csv_auto($pattern, union_by_name=true, header=true)"
+    else:
+        from_clause = "read_parquet($pattern, union_by_name=true)"
+
     query = f"""
     COPY (
       SELECT
         *
-      FROM read_csv_auto($pattern, union_by_name=true, header=true)
+      FROM {from_clause}
       WHERE
         upper(trim("CITY")) = 'DETROIT'
     )
@@ -45,7 +71,7 @@ def main() -> None:
      COMPRESSION ZSTD);
     """
 
-    con.execute(query, {"pattern": INPUT_GLOB})
+    con.execute(query, {"pattern": input_glob})
     con.close()
 
     if out.exists():
