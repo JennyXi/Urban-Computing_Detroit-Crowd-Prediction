@@ -21,6 +21,10 @@ use_official_autoformer/checkpoints/
 use_official_autoformer/**/__pycache__/
 use_official_autoformer/third_party/**/test_results/
 
+# Grid Autoformer workflow (large / generated)
+use_official_autoformer_grid/checkpoints/
+use_official_autoformer_grid/data/grid_weekly_top100_visits/grid_*.csv
+
 # Secrets
 .env
 *.pem

@@ -73,12 +73,26 @@ def main() -> None:
         default="autoformer_weekly_preprocessed.csv",
         help="CSV filename under <repo-root>/data/",
     )
+    parser.add_argument(
+        "--data-root",
+        default=None,
+        help="Override data root directory. Default: <repo-root>/data/",
+    )
     parser.add_argument("--freq", default="w", help="Autoformer time feature frequency, e.g. w/h.")
     parser.add_argument("--features", default="MS", choices=["S", "M", "MS"])
     parser.add_argument("--target", default="OT")
     parser.add_argument("--seq-len", type=int, default=12)
     parser.add_argument("--label-len", type=int, default=6)
     parser.add_argument("--pred-len", type=int, default=4)
+    # model hyperparams (must match the training run to load checkpoint)
+    parser.add_argument("--d-model", type=int, default=256)
+    parser.add_argument("--d-ff", type=int, default=1024)
+    parser.add_argument("--n-heads", type=int, default=8)
+    parser.add_argument("--e-layers", type=int, default=2)
+    parser.add_argument("--d-layers", type=int, default=1)
+    parser.add_argument("--dropout", type=float, default=0.05)
+    parser.add_argument("--moving-avg", type=int, default=25)
+    parser.add_argument("--factor", type=int, default=1)
     parser.add_argument(
         "--scope",
         default="test",
@@ -102,6 +116,11 @@ def main() -> None:
         help="Used when --setting=latest.",
     )
     parser.add_argument(
+        "--checkpoints-dir",
+        default=None,
+        help="Override checkpoints directory. Default: <repo-root>/use_official_autoformer/checkpoints",
+    )
+    parser.add_argument(
         "--out",
         default=None,
         help="Output CSV path. Default: use_official_autoformer/outputs/<setting>_pred.csv",
@@ -114,9 +133,13 @@ def main() -> None:
         if args.autoformer_root
         else (repo_root / "use_official_autoformer" / "third_party" / "Autoformer").resolve()
     )
-    data_root = repo_root / "data"
+    data_root = Path(args.data_root).resolve() if args.data_root else (repo_root / "data")
     csv_path = data_root / args.data_path
-    checkpoints_dir = repo_root / "use_official_autoformer" / "checkpoints"
+    checkpoints_dir = (
+        Path(args.checkpoints_dir).resolve()
+        if args.checkpoints_dir
+        else (repo_root / "use_official_autoformer" / "checkpoints")
+    )
 
     if not csv_path.exists():
         raise SystemExit(f"Missing CSV: {csv_path}")
@@ -171,18 +194,18 @@ def main() -> None:
         enc_in = enc_in_val
         dec_in = enc_in_val
         c_out = enc_in_val
-        d_model = 256
-        n_heads = 8
-        e_layers = 2
-        d_layers = 1
-        d_ff = 1024
-        factor = 1
-        dropout = 0.05
+        d_model = int(args.d_model)
+        n_heads = int(args.n_heads)
+        e_layers = int(args.e_layers)
+        d_layers = int(args.d_layers)
+        d_ff = int(args.d_ff)
+        factor = int(args.factor)
+        dropout = float(args.dropout)
         embed = "timeF"
         freq = args.freq
         activation = "gelu"
         output_attention = False
-        moving_avg = 25
+        moving_avg = int(args.moving_avg)
         distil = True
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
