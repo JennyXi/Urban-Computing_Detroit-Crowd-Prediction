@@ -15,6 +15,12 @@ data/*.html
 *.parquet
 checkpoints/
 
+# Official Autoformer integration (large / generated)
+use_official_autoformer/third_party/
+use_official_autoformer/checkpoints/
+use_official_autoformer/**/__pycache__/
+use_official_autoformer/third_party/**/test_results/
+
 # Secrets
 .env
 *.pem
