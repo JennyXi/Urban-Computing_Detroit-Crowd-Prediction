@@ -22,6 +22,12 @@ cd "E:\Urban Computing Final Project\Try_0412"
 .\.venv\Scripts\python.exe .\use_official_autoformer_grid\prepare_top100_grid_weekly_csvs.py --top-k 100
 ```
 
+Optional (recommended): apply `log1p` transform to reduce spike impact:
+
+```powershell
+.\.venv\Scripts\python.exe .\use_official_autoformer_grid\prepare_top100_grid_weekly_csvs.py --top-k 100 --target-transform log1p --out-dir use_official_autoformer_grid/data/grid_weekly_top100_visits_log1p
+```
+
 Outputs:
 - `use_official_autoformer_grid/data/grid_weekly_top100_visits/grid_topk_manifest.csv` (grid_id + gx/gy + lon/lat + totals)
 - `use_official_autoformer_grid/data/grid_weekly_top100_visits/grid_<grid_id>.csv` (one per grid)
@@ -29,6 +35,13 @@ Outputs:
 ### Step 2. Train Autoformer per grid (Top-100)
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File .\use_official_autoformer_grid\runs\train_top100_grids_weekly_12to4.ps1
+```
+
+If you used a different data root (e.g. log1p directory), set `GRID_DATA_ROOT`:
+
+```powershell
+$env:GRID_DATA_ROOT = "E:\Urban Computing Final Project\Try_0412\use_official_autoformer_grid\data\grid_weekly_top100_visits_log1p"
 powershell -ExecutionPolicy Bypass -File .\use_official_autoformer_grid\runs\train_top100_grids_weekly_12to4.ps1
 ```
 
@@ -43,6 +56,12 @@ After training some/all grids, export predictions into **one table**:
 
 ```powershell
 .\.venv\Scripts\python.exe .\use_official_autoformer_grid\export_grid_predictions_2025.py --target-year 2025
+```
+
+If you trained on log1p data, export and invert back to raw visits:
+
+```powershell
+.\.venv\Scripts\python.exe .\use_official_autoformer_grid\export_grid_predictions_2025.py --target-year 2025 --grid-data-root use_official_autoformer_grid/data/grid_weekly_top100_visits_log1p --target-transform log1p
 ```
 
 Outputs:

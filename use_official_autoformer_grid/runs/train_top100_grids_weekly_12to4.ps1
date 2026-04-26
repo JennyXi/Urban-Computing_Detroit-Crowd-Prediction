@@ -8,6 +8,10 @@ $ExternalAutoformerRoot = "E:\Urban Computing Final Project\autoformer_spatial_0
 $AutoformerRoot = if (Test-Path $ExternalAutoformerRoot) { $ExternalAutoformerRoot } else { Join-Path $RepoRoot "use_official_autoformer\third_party\Autoformer" }
 
 $GridDataRoot = Join-Path $RepoRoot "use_official_autoformer_grid\data\grid_weekly_top100_visits"
+$GridDataRootEnv = $env:GRID_DATA_ROOT
+if ($GridDataRootEnv -and $GridDataRootEnv.Trim().Length -gt 0) {
+  $GridDataRoot = $GridDataRootEnv
+}
 $Manifest = Join-Path $GridDataRoot "grid_topk_manifest.csv"
 $Checkpoints = Join-Path $RepoRoot "use_official_autoformer_grid\checkpoints"
 

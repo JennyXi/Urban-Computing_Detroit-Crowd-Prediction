@@ -23,6 +23,12 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=100)
     parser.add_argument("--date-start", default="2025-01-01")
     parser.add_argument("--date-end", default="2025-12-31")
+    parser.add_argument(
+        "--target-transform",
+        default="none",
+        choices=["none", "log1p"],
+        help="Optional transform applied to OT before writing CSVs. Use 'log1p' to reduce spike impact.",
+    )
     args = parser.parse_args()
 
     inp = Path(args.input)
@@ -60,16 +66,21 @@ def main() -> None:
     # Write per-grid Autoformer CSVs: date, OT (univariate)
     for grid_id in top_ids:
         g = df[df["grid_id"] == grid_id].sort_values("week_start")
+        ot = g["visits"].astype(np.float64).to_numpy()
+        if args.target_transform == "log1p":
+            ot = np.log1p(np.maximum(ot, 0.0))
         out = pd.DataFrame(
             {
                 "date": g["week_start"].dt.strftime("%Y-%m-%d"),
-                "OT": g["visits"].astype(np.float64).to_numpy(),
+                "OT": ot,
             }
         )
         out.to_csv(out_dir / f"grid_{grid_id}.csv", index=False)
 
     print(f"Wrote {len(top_ids)} grid CSVs to {out_dir}")
     print(f"Manifest: {out_dir / 'grid_topk_manifest.csv'}")
+    if args.target_transform != "none":
+        print(f"Target transform: {args.target_transform}")
 
 
 if __name__ == "__main__":

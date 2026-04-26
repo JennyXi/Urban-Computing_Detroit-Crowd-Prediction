@@ -125,6 +125,12 @@ def main() -> None:
         default=None,
         help="Output CSV path. Default: use_official_autoformer/outputs/<setting>_pred.csv",
     )
+    parser.add_argument(
+        "--target-transform",
+        default="none",
+        choices=["none", "log1p"],
+        help="If the training CSV target was transformed (e.g. log1p), specify it here to invert y_true/y_pred back to raw scale.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
@@ -294,6 +300,11 @@ def main() -> None:
 
             preds[i, :] = inv_out
             trues[i, :] = inv_true
+
+    # If the target was transformed for training (e.g. log1p), invert back to raw scale here.
+    if args.target_transform == "log1p":
+        preds = np.expm1(preds)
+        trues = np.expm1(trues)
 
     # Long-form export
     rows = []

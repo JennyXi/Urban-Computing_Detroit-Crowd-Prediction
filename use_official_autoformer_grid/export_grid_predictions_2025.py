@@ -33,6 +33,23 @@ def main() -> None:
     )
     parser.add_argument("--target-year", type=int, default=2025)
     parser.add_argument(
+        "--grid-data-root",
+        default="use_official_autoformer_grid/data/grid_weekly_top100_visits",
+        help="Directory containing per-grid CSVs + manifest.",
+    )
+    parser.add_argument(
+        "--target-transform",
+        default="none",
+        choices=["none", "log1p"],
+        help="If per-grid CSVs were written with a target transform (e.g. log1p), pass it through to invert exports.",
+    )
+    parser.add_argument(
+        "--scope",
+        default="all",
+        choices=["train", "val", "test", "all"],
+        help="Which portion to export. 'test' matches Autoformer default evaluation. 'all' runs rolling forecasts across the whole year.",
+    )
+    parser.add_argument(
         "--autoformer-root",
         default=r"E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer",
         help="Path to official Autoformer repo clone (used by exporter for model code).",
@@ -45,7 +62,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoints_dir = repo_root / "use_official_autoformer_grid" / "checkpoints"
-    grid_data_root = repo_root / "use_official_autoformer_grid" / "data" / "grid_weekly_top100_visits"
+    grid_data_root = (repo_root / args.grid_data_root).resolve()
 
     if not manifest_path.exists():
         raise SystemExit(f"Missing manifest: {manifest_path}")
@@ -75,7 +92,7 @@ def main() -> None:
         if not (grid_data_root / data_path).exists():
             continue
 
-        out_path = out_dir / f"{setting}_all_{args.target_year}_pred.csv"
+        out_path = out_dir / f"{setting}_{args.scope}_{args.target_year}_pred.csv"
         cmd = [
             str(py),
             str(exporter),
@@ -84,7 +101,7 @@ def main() -> None:
             "--checkpoints-dir",
             str(checkpoints_dir),
             "--scope",
-            "all",
+            str(args.scope),
             "--target-year",
             str(args.target_year),
             "--features",
@@ -111,6 +128,8 @@ def main() -> None:
             data_path,
             "--data-root",
             str(grid_data_root),
+            "--target-transform",
+            str(args.target_transform),
             "--setting",
             setting,
             "--out",
@@ -132,7 +151,7 @@ def main() -> None:
 
     all_long = pd.concat(rows, ignore_index=True)
     all_long = all_long.sort_values(["grid_id", "date", "horizon", "window_start"]).reset_index(drop=True)
-    long_path = out_dir / f"grid_top100_weekly_visits_all_{args.target_year}_pred_long.csv"
+    long_path = out_dir / f"grid_top100_weekly_visits_{args.scope}_{args.target_year}_pred_long.csv"
     all_long.to_csv(long_path, index=False)
 
     # One row per (grid_id, date) for mapping.
@@ -147,7 +166,7 @@ def main() -> None:
         )
         .sort_values(["date", "grid_id"])
     )
-    by_date_path = out_dir / f"grid_top100_weekly_visits_all_{args.target_year}_pred_by_date.csv"
+    by_date_path = out_dir / f"grid_top100_weekly_visits_{args.scope}_{args.target_year}_pred_by_date.csv"
     by_date.to_csv(by_date_path, index=False)
 
     print(f"Wrote: {long_path}")

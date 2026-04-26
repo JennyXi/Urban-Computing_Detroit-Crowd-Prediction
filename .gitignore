@@ -24,6 +24,14 @@ use_official_autoformer/third_party/**/test_results/
 # Grid Autoformer workflow (large / generated)
 use_official_autoformer_grid/checkpoints/
 use_official_autoformer_grid/data/grid_weekly_top100_visits/grid_*.csv
+use_official_autoformer_grid/data/grid_weekly_top100_visits_log1p/
+use_official_autoformer_grid/outputs/validation/
+use_official_autoformer_grid/outputs_raw/
+use_official_autoformer_grid/outputs_log1p/
+use_official_autoformer_grid/outputs/detroit_grid100_*_pred*.csv
+use_official_autoformer_grid/outputs_raw/detroit_grid100_*_pred*.csv
+use_official_autoformer_grid/outputs_log1p/detroit_grid100_*_pred*.csv
+use_official_autoformer_grid/outputs/grid_top100_weekly_visits_*_pred*.csv
 
 # Secrets
 .env
