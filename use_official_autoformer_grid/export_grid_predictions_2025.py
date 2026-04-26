@@ -49,6 +49,9 @@ def main() -> None:
         choices=["train", "val", "test", "all"],
         help="Which portion to export. 'test' matches Autoformer default evaluation. 'all' runs rolling forecasts across the whole year.",
     )
+    parser.add_argument("--seq-len", type=int, default=24)
+    parser.add_argument("--label-len", type=int, default=12)
+    parser.add_argument("--pred-len", type=int, default=4)
     parser.add_argument(
         "--autoformer-root",
         default=r"E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer",
@@ -109,11 +112,11 @@ def main() -> None:
             "--freq",
             "w",
             "--seq-len",
-            "12",
+            str(int(args.seq_len)),
             "--label-len",
-            "6",
+            str(int(args.label_len)),
             "--pred-len",
-            "4",
+            str(int(args.pred_len)),
             "--d-model",
             "128",
             "--d-ff",

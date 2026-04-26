@@ -45,6 +45,15 @@ $env:GRID_DATA_ROOT = "E:\Urban Computing Final Project\Try_0412\use_official_au
 powershell -ExecutionPolicy Bypass -File .\use_official_autoformer_grid\runs\train_top100_grids_weekly_12to4.ps1
 ```
 
+Optional: override time window lengths (defaults are `seq_len=24`, `label_len=12`, `pred_len=4`):
+
+```powershell
+$env:SEQ_LEN = "24"
+$env:LABEL_LEN = "12"
+$env:PRED_LEN = "4"
+powershell -ExecutionPolicy Bypass -File .\use_official_autoformer_grid\runs\train_top100_grids_weekly_12to4.ps1
+```
+
 Notes:
 - This runs **one model per grid** (simplest panel strategy).
 - Uses `features=S` (univariate) so `enc_in=1`.
@@ -62,6 +71,12 @@ If you trained on log1p data, export and invert back to raw visits:
 
 ```powershell
 .\.venv\Scripts\python.exe .\use_official_autoformer_grid\export_grid_predictions_2025.py --target-year 2025 --grid-data-root use_official_autoformer_grid/data/grid_weekly_top100_visits_log1p --target-transform log1p
+```
+
+Export strict test-split predictions (recommended for evaluation):
+
+```powershell
+.\.venv\Scripts\python.exe .\use_official_autoformer_grid\export_grid_predictions_2025.py --target-year 2025 --scope test
 ```
 
 Outputs:

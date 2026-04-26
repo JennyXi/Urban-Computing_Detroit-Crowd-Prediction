@@ -128,6 +128,16 @@ def main() -> None:
         help="Small constant to stabilize (s)MAPE when y_true is near zero.",
     )
     parser.add_argument(
+        "--date-start",
+        default=None,
+        help="If set (YYYY-MM-DD), only evaluate rows with date >= this (inclusive).",
+    )
+    parser.add_argument(
+        "--date-end",
+        default=None,
+        help="If set (YYYY-MM-DD), only evaluate rows with date <= this (inclusive).",
+    )
+    parser.add_argument(
         "--top-n",
         type=int,
         default=20,
@@ -170,6 +180,17 @@ def main() -> None:
     pred_col: PredCol = args.pred_col
     df = df[["grid_id", "date", "y_true", pred_col]].rename(columns={pred_col: "y_pred"}).copy()
     df["grid_id"] = df["grid_id"].astype(str)
+
+    # Optional: align evaluation window by date (fair comparison across experiments)
+    if args.date_start is not None:
+        d0 = pd.Timestamp(args.date_start).normalize()
+        df = df[df["date"].dt.normalize() >= d0].copy()
+    if args.date_end is not None:
+        d1 = pd.Timestamp(args.date_end).normalize()
+        df = df[df["date"].dt.normalize() <= d1].copy()
+    if df.empty:
+        raise SystemExit("No rows left after date filtering. Check --date-start/--date-end.")
+
     df = _row_level_fields(df, eps=float(args.eps), ytrue_min_for_ape=float(args.ytrue_min_for_ape))
 
     # --- Overall metrics (all rows) ---

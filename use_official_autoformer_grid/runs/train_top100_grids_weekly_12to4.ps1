@@ -15,6 +15,12 @@ if ($GridDataRootEnv -and $GridDataRootEnv.Trim().Length -gt 0) {
 $Manifest = Join-Path $GridDataRoot "grid_topk_manifest.csv"
 $Checkpoints = Join-Path $RepoRoot "use_official_autoformer_grid\checkpoints"
 
+$SeqLen = if ($env:SEQ_LEN) { [int]$env:SEQ_LEN } else { 24 }
+$LabelLen = if ($env:LABEL_LEN) { [int]$env:LABEL_LEN } else { 12 }
+$PredLen = if ($env:PRED_LEN) { [int]$env:PRED_LEN } else { 4 }
+$Des = if ($env:RUN_DES) { $env:RUN_DES } else { "grid_weekly_${SeqLen}to${PredLen}" }
+$TrainEpochs = if ($env:TRAIN_EPOCHS) { [int]$env:TRAIN_EPOCHS } else { 50 }
+
 $env:PYTHONUNBUFFERED = "1"
 
 if (!(Test-Path $Manifest)) {
@@ -23,6 +29,15 @@ if (!(Test-Path $Manifest)) {
 
 $ids = & $Py -c "import pandas as pd; m=pd.read_csv(r'$Manifest'); print('\n'.join(m['grid_id'].astype(str).tolist()))"
 $gridIds = $ids -split "`n" | Where-Object { $_.Trim().Length -gt 0 }
+
+# Optional: limit training to first N grids for quick validation runs
+$LimitEnv = $env:GRID_LIMIT
+if ($LimitEnv -and $LimitEnv.Trim().Length -gt 0) {
+  $n = [int]$LimitEnv
+  if ($n -gt 0 -and $gridIds.Count -gt $n) {
+    $gridIds = $gridIds[0..($n-1)]
+  }
+}
 
 Write-Host "Training Autoformer per-grid (Top $($gridIds.Count))"
 Write-Host "Data root: $GridDataRoot"
@@ -52,9 +67,9 @@ foreach ($gridId in $gridIds) {
     --features S `
     --target OT `
     --freq w `
-    --seq_len 12 `
-    --label_len 6 `
-    --pred_len 4 `
+    --seq_len $SeqLen `
+    --label_len $LabelLen `
+    --pred_len $PredLen `
     --enc_in 1 `
     --dec_in 1 `
     --c_out 1 `
@@ -67,9 +82,9 @@ foreach ($gridId in $gridIds) {
     --moving_avg 25 `
     --factor 1 `
     --embed timeF `
-    --des grid_weekly_12to4 `
+    --des $Des `
     --itr 1 `
-    --train_epochs 50 `
+    --train_epochs $TrainEpochs `
     --batch_size 16 `
     --learning_rate 0.0001 `
     --patience 20 `
