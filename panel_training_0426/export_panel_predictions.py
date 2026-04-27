@@ -21,7 +21,10 @@ def _custom_split(n: int, seq_len: int, pred_len: int):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export predictions from panel Autoformer checkpoint (per grid, aligned dates).")
-    parser.add_argument("--panel-csv", default="panel_training_0426/outputs/panel_weekly_top100_2024_2025.csv")
+    parser.add_argument(
+        "--panel-csv",
+        default="panel_training_0426/outputs/panel_weekly_top100_2024_2025_topk2024_city_lag1_log1p.csv",
+    )
     parser.add_argument("--autoformer-root", required=True)
     parser.add_argument("--checkpoints-dir", default="panel_training_0426/checkpoints")
     parser.add_argument("--setting", default=None, help="Checkpoint setting folder name. If omitted, uses latest by mtime.")

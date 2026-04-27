@@ -25,8 +25,8 @@ cd "E:\Urban Computing Final Project\Try_0412"
 ```
 
 Outputs:
-- `panel_training_0426/outputs/panel_weekly_top100_2024_2025.csv`
-- `panel_training_0426/outputs/panel_weekly_top100_manifest.csv`
+- `panel_training_0426/outputs/panel_weekly_top100_2024_2025_topk2024_city_lag1_log1p.csv`
+- `panel_training_0426/outputs/panel_weekly_top100_manifest_topk2024_city_lag1_log1p.csv`
 
 ### Step 2. Train one shared Autoformer
 
