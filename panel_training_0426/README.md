@@ -25,7 +25,9 @@ cd "E:\Urban Computing Final Project\Try_0412"
 .\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
 ```
 
-Optional (recommended): add **past-only** weekend signal `weekend_share_lag1` as a covariate channel.
+Default build enables a conservative spatial lag feature (**`nbr8_std_visits_lag1`**) and keeps weekend covariates off.
+
+Optional: add **past-only** weekend signal `weekend_share_lag1` as a covariate channel.
 
 1) Rebuild grid-weekly parquet with weekend columns:
 

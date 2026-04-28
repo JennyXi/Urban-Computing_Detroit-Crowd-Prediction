@@ -85,7 +85,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--spatial-cov",
-        default="none",
+        default="nbr8_std_lag1",
         choices=["none", "nbr8_meanstd_lag1", "nbr8_std_lag1"],
         help="Optional past-only spatial covariates using 8-neighborhood (Moore) aggregation. "
         "nbr8_meanstd_lag1 adds mean/std of neighbors' visits from last week. "
