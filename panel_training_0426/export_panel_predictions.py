@@ -20,6 +20,42 @@ def _custom_split(n: int, seq_len: int, pred_len: int):
     return border1s, border2s
 
 
+def _year_split_g0s(
+    dates: pd.Series, seq_len: int, pred_len: int, train_end: str, test_start: str, val_weeks: int
+) -> tuple[list[int], list[int], list[int], int]:
+    d = pd.to_datetime(dates).reset_index(drop=True)
+    n = len(d)
+    max_g0 = n - seq_len - pred_len
+    if max_g0 < 0:
+        return [], [], [], 0
+
+    te = pd.Timestamp(train_end).normalize()
+    ts = pd.Timestamp(test_start).normalize()
+    valw = int(val_weeks)
+    val_target_start = te - pd.Timedelta(days=7 * (valw - 1))
+
+    train_g0s: list[int] = []
+    val_g0s: list[int] = []
+    test_g0s: list[int] = []
+    for g0 in range(0, max_g0 + 1):
+        t = pd.to_datetime(d.iloc[g0 + seq_len : g0 + seq_len + pred_len])
+        if t.empty:
+            continue
+        t0 = pd.Timestamp(t.min()).normalize()
+        t1 = pd.Timestamp(t.max()).normalize()
+        if t0 >= ts:
+            test_g0s.append(g0)
+            continue
+        if t1 <= te:
+            if t0 >= val_target_start:
+                val_g0s.append(g0)
+            else:
+                train_g0s.append(g0)
+
+    scaler_fit_end_excl = int((d.dt.normalize() <= te).sum())
+    return train_g0s, val_g0s, test_g0s, scaler_fit_end_excl
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export predictions from panel Autoformer checkpoint (per grid, aligned dates).")
     parser.add_argument(
@@ -37,6 +73,15 @@ def main() -> None:
     parser.add_argument("--pred-len", type=int, default=4)
     parser.add_argument("--freq", default="w")
     parser.add_argument("--target-transform", default="log1p", choices=["none", "log1p"])
+    parser.add_argument(
+        "--split-mode",
+        default="year",
+        choices=["ratio", "year"],
+        help="Must match training. year: strict train<=train_end, test>=test_start.",
+    )
+    parser.add_argument("--train-end", default="2024-12-31")
+    parser.add_argument("--test-start", default="2025-01-01")
+    parser.add_argument("--val-weeks", type=int, default=10)
     parser.add_argument(
         "--stamp",
         default=None,
@@ -79,13 +124,20 @@ def main() -> None:
     enc_in_val = len(cols_data)
     f_dim = -1
 
+    sm = str(args.split_mode)
     # Fit scaler on train portion across all grids
     mats = []
     for gid, g in df.groupby("grid_id", sort=False):
         g = g.sort_values("date").reset_index(drop=True)
         n = len(g)
-        border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
-        mats.append(g.loc[border1s[0] : border2s[0] - 1, cols_data])
+        if sm == "ratio":
+            border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
+            mats.append(g.loc[border1s[0] : border2s[0] - 1, cols_data])
+        else:
+            _tr, _va, _te, end_excl = _year_split_g0s(
+                g["date"], int(args.seq_len), int(args.pred_len), str(args.train_end), str(args.test_start), int(args.val_weeks)
+            )
+            mats.append(g.loc[: end_excl - 1, cols_data])
     scaler = StandardScaler()
     scaler.fit(pd.concat(mats, ignore_index=True).to_numpy(dtype=np.float32))
 
@@ -128,25 +180,34 @@ def main() -> None:
         for gid, g in df.groupby("grid_id", sort=False):
             g = g.sort_values("date").reset_index(drop=True)
             n = len(g)
-            border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
-            if args.scope == "train":
-                border1, border2 = border1s[0], border2s[0]
-            elif args.scope == "val":
-                border1, border2 = border1s[1], border2s[1]
-            elif args.scope == "test":
-                border1, border2 = border1s[2], border2s[2]
+            if sm == "ratio":
+                border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
+                if args.scope == "train":
+                    border1, border2 = border1s[0], border2s[0]
+                elif args.scope == "val":
+                    border1, border2 = border1s[1], border2s[1]
+                elif args.scope == "test":
+                    border1, border2 = border1s[2], border2s[2]
+                else:
+                    border1, border2 = 0, n
+                n_samples = (border2 - border1) - args.seq_len - args.pred_len + 1
+                if n_samples <= 0:
+                    continue
+                g0_list = list(range(border1, border1 + n_samples))
             else:
-                border1, border2 = 0, n
-
-            n_samples = (border2 - border1) - args.seq_len - args.pred_len + 1
-            if n_samples <= 0:
-                continue
+                tr, va, te, _end_excl = _year_split_g0s(
+                    g["date"], int(args.seq_len), int(args.pred_len), str(args.train_end), str(args.test_start), int(args.val_weeks)
+                )
+                g0_list = {"train": tr, "val": va, "test": te}.get(str(args.scope), [])
+                if args.scope == "all":
+                    g0_list = list(range(0, max(0, n - int(args.seq_len) - int(args.pred_len) + 1)))
+                if not g0_list:
+                    continue
 
             mat = scaler.transform(g.loc[:, cols_data].to_numpy(dtype=np.float32)).astype(np.float32)
             stamps = time_features(pd.to_datetime(g["date"].values), freq=args.freq).transpose(1, 0).astype(np.float32)
 
-            for i in range(n_samples):
-                g0 = border1 + i
+            for i, g0 in enumerate(g0_list):
                 s_begin, s_end = g0, g0 + args.seq_len
                 r_begin = s_end - args.label_len
                 r_end = r_begin + args.label_len + args.pred_len

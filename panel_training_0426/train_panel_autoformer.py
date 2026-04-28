@@ -36,12 +36,19 @@ class PanelWindows(Dataset):
         cfg: PanelConfig,
         scaler: StandardScaler | None = None,
         time_features_fn=None,
+        *,
+        split_mode: str = "ratio",
+        train_end: str = "2024-12-31",
+        test_start: str = "2025-01-01",
+        val_weeks: int = 10,
     ):
         assert split in {"train", "val", "test"}
+        assert split_mode in {"ratio", "year"}
         self.cfg = cfg
         self.split = split
         self.grid_ids = grid_ids
         self.time_features_fn = time_features_fn
+        self.split_mode = split_mode
 
         # Build per-grid arrays (already sorted by date)
         self.series = {}
@@ -54,37 +61,93 @@ class PanelWindows(Dataset):
         self.cov_cols = [c for c in df.columns if c not in {"grid_id", "date", "OT"}]
         self.cols_data = self.cov_cols + ["OT"]
 
-        # Compute Dataset_Custom borders per grid (70/10/20), then build window indices
-        self.indices: list[tuple[str, int, int, int]] = []  # (gid, border1, border2, i)
-        for gid, g in self.series.items():
-            n = len(g)
-            num_train = int(n * 0.7)
-            num_test = int(n * 0.2)
-            num_val = n - num_train - num_test
-            border1s = [0, num_train - cfg.seq_len, n - num_test - cfg.seq_len]
-            border2s = [num_train, num_train + num_val, n]
-            if split == "train":
-                border1, border2 = border1s[0], border2s[0]
-            elif split == "val":
-                border1, border2 = border1s[1], border2s[1]
-            else:
-                border1, border2 = border1s[2], border2s[2]
+        def _targets_for_g0(dates: pd.Series, g0: int) -> pd.DatetimeIndex:
+            # target timestamps for this forecast window
+            return pd.to_datetime(dates.iloc[g0 + cfg.seq_len : g0 + cfg.seq_len + cfg.pred_len])
 
-            n_samples = (border2 - border1) - cfg.seq_len - cfg.pred_len + 1
-            if n_samples <= 0:
-                continue
-            for i in range(n_samples):
-                self.indices.append((gid, border1, border2, i))
+        def _g0s_year_split(dates: pd.Series) -> tuple[list[int], list[int], list[int]]:
+            d = pd.to_datetime(dates).reset_index(drop=True)
+            n = len(d)
+            max_g0 = n - cfg.seq_len - cfg.pred_len
+            if max_g0 < 0:
+                return [], [], []
+
+            te = pd.Timestamp(train_end).normalize()
+            ts = pd.Timestamp(test_start).normalize()
+            valw = int(val_weeks)
+            # val targets are the last `val_weeks` weeks within 2024 (up to train_end)
+            val_target_start = te - pd.Timedelta(days=7 * (valw - 1))
+
+            train_g0s: list[int] = []
+            val_g0s: list[int] = []
+            test_g0s: list[int] = []
+            for g0 in range(0, max_g0 + 1):
+                t = _targets_for_g0(d, g0)
+                if t.empty:
+                    continue
+                t0 = pd.Timestamp(t.min()).normalize()
+                t1 = pd.Timestamp(t.max()).normalize()
+
+                # test: all targets in [test_start, ...]
+                if t0 >= ts:
+                    test_g0s.append(g0)
+                    continue
+
+                # train/val: targets must be within <= train_end
+                if t1 <= te:
+                    if t0 >= val_target_start:
+                        val_g0s.append(g0)
+                    else:
+                        train_g0s.append(g0)
+            return train_g0s, val_g0s, test_g0s
+
+        # Build window indices
+        self.indices: list[tuple[str, int]] = []  # (gid, g0)
+        if split_mode == "ratio":
+            # Dataset_Custom-style borders per grid (70/10/20)
+            for gid, g in self.series.items():
+                n = len(g)
+                num_train = int(n * 0.7)
+                num_test = int(n * 0.2)
+                num_val = n - num_train - num_test
+                border1s = [0, num_train - cfg.seq_len, n - num_test - cfg.seq_len]
+                border2s = [num_train, num_train + num_val, n]
+                if split == "train":
+                    border1, border2 = border1s[0], border2s[0]
+                elif split == "val":
+                    border1, border2 = border1s[1], border2s[1]
+                else:
+                    border1, border2 = border1s[2], border2s[2]
+
+                n_samples = (border2 - border1) - cfg.seq_len - cfg.pred_len + 1
+                if n_samples <= 0:
+                    continue
+                for i in range(n_samples):
+                    self.indices.append((gid, border1 + i))
+        else:
+            # Strict year split: train targets in 2024 (<= train_end), test targets in 2025 (>= test_start)
+            for gid, g in self.series.items():
+                tr, va, te = _g0s_year_split(g["date"])
+                g0s = {"train": tr, "val": va, "test": te}[split]
+                for g0 in g0s:
+                    self.indices.append((gid, int(g0)))
 
         # Fit/attach scaler on train partition only (matches Dataset_Custom spirit but across all grids)
         if scaler is None:
             scaler = StandardScaler()
             train_rows = []
-            for gid, g in self.series.items():
-                n = len(g)
-                num_train = int(n * 0.7)
-                # fit on [0:num_train]
-                train_rows.append(g.loc[: num_train - 1, self.cols_data])
+            if split_mode == "ratio":
+                for gid, g in self.series.items():
+                    n = len(g)
+                    num_train = int(n * 0.7)
+                    # fit on [0:num_train]
+                    train_rows.append(g.loc[: num_train - 1, self.cols_data])
+            else:
+                # fit scaler only on rows whose date <= train_end (never touch 2025 values)
+                te = pd.Timestamp(train_end).normalize()
+                for _gid, g in self.series.items():
+                    mask = pd.to_datetime(g["date"]).dt.normalize() <= te
+                    train_rows.append(g.loc[mask, self.cols_data])
             train_mat = pd.concat(train_rows, ignore_index=True).to_numpy(dtype=np.float32)
             scaler.fit(train_mat)
         self.scaler = scaler
@@ -93,10 +156,9 @@ class PanelWindows(Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx: int):
-        gid, border1, _border2, i = self.indices[idx]
+        gid, g0 = self.indices[idx]
         g = self.series[gid]
         cfg = self.cfg
-        g0 = border1 + i
         s_begin, s_end = g0, g0 + cfg.seq_len
         r_begin = s_end - cfg.label_len
         r_end = r_begin + cfg.label_len + cfg.pred_len
@@ -156,6 +218,20 @@ def main() -> None:
     parser.add_argument("--freq", default="w")
     parser.add_argument("--target-transform", default="log1p", choices=["none", "log1p"])
     parser.add_argument(
+        "--split-mode",
+        default="year",
+        choices=["ratio", "year"],
+        help="ratio: 70/10/20 split per grid timeline. year: strict train<=train_end, test>=test_start (no 2025 leakage).",
+    )
+    parser.add_argument("--train-end", default="2024-12-31", help="Used when --split-mode year.")
+    parser.add_argument("--test-start", default="2025-01-01", help="Used when --split-mode year.")
+    parser.add_argument(
+        "--val-weeks",
+        type=int,
+        default=10,
+        help="Year split only: use the last N weeks before --train-end as validation targets.",
+    )
+    parser.add_argument(
         "--loss",
         default="huber",
         choices=["mse", "huber"],
@@ -203,11 +279,52 @@ def main() -> None:
         target_transform=str(args.target_transform),
     )
 
+    sm = str(args.split_mode)
     # Create datasets/loaders (scaler fitted inside train dataset)
-    train_ds = PanelWindows(df=df, grid_ids=grid_ids, split="train", cfg=cfg, scaler=None, time_features_fn=time_features)
+    train_ds = PanelWindows(
+        df=df,
+        grid_ids=grid_ids,
+        split="train",
+        cfg=cfg,
+        scaler=None,
+        time_features_fn=time_features,
+        split_mode=sm,
+        train_end=str(args.train_end),
+        test_start=str(args.test_start),
+        val_weeks=int(args.val_weeks),
+    )
     scaler = train_ds.scaler
-    val_ds = PanelWindows(df=df, grid_ids=grid_ids, split="val", cfg=cfg, scaler=scaler, time_features_fn=time_features)
-    test_ds = PanelWindows(df=df, grid_ids=grid_ids, split="test", cfg=cfg, scaler=scaler, time_features_fn=time_features)
+    val_ds = PanelWindows(
+        df=df,
+        grid_ids=grid_ids,
+        split="val",
+        cfg=cfg,
+        scaler=scaler,
+        time_features_fn=time_features,
+        split_mode=sm,
+        train_end=str(args.train_end),
+        test_start=str(args.test_start),
+        val_weeks=int(args.val_weeks),
+    )
+    test_ds = PanelWindows(
+        df=df,
+        grid_ids=grid_ids,
+        split="test",
+        cfg=cfg,
+        scaler=scaler,
+        time_features_fn=time_features,
+        split_mode=sm,
+        train_end=str(args.train_end),
+        test_start=str(args.test_start),
+        val_weeks=int(args.val_weeks),
+    )
+    if sm == "year":
+        if len(train_ds) == 0:
+            raise SystemExit("Year split produced no training windows. Check panel date range and --train-end.")
+        if len(val_ds) == 0:
+            raise SystemExit("Year split produced no validation windows. Try smaller --val-weeks or smaller seq_len/pred_len.")
+        if len(test_ds) == 0:
+            raise SystemExit("Year split produced no test windows. Check panel date range and --test-start.")
 
     train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0, drop_last=False)
@@ -290,6 +407,7 @@ def main() -> None:
     print(f"Using device: {device_name}")
     print(f"Loss: {loss_name}" + (f" (delta={float(args.huber_delta):g})" if loss_name == "huber" else ""))
     print(f"Early stopping: {'on' if args.early_stop else 'off (full --epochs)'}")
+    print(f"Split mode: {sm}" + (f"  train_end={args.train_end}  test_start={args.test_start}  val_weeks={args.val_weeks}" if sm == "year" else ""))
 
     if args.resume and ckpt_path.exists():
         model.load_state_dict(torch.load(ckpt_path, map_location=device))

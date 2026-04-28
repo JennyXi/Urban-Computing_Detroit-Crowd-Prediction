@@ -47,6 +47,10 @@ Outputs:
 
 By default training runs the full `--epochs` with **no early stopping**. Pass **`--early-stop`** if you want to stop after validation loss fails to improve for **`--patience`** epochs.
 
+Split policy:
+- default **`--split-mode year`**: train targets are in 2024 (<= `--train-end`), test targets are in 2025 (>= `--test-start`).
+- `--split-mode ratio`: legacy 70/10/20 on the mixed 2024–2025 axis.
+
 ```powershell
 .\.venv\Scripts\python.exe .\panel_training_0426\train_panel_autoformer.py --autoformer-root "E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer"
 ```
