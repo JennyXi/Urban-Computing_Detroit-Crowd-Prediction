@@ -39,6 +39,18 @@ Optional (recommended): add **past-only** weekend signal `weekend_share_lag1` as
 .\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --weekend-cov share_lag1 --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
 ```
 
+Optional: add **past-only** spatial lag covariates from 8-neighborhood (more robust for local anomalies):
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --spatial-cov nbr8_meanstd_lag1 --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
+```
+
+More conservative option (recommended if you worry about over-smoothing): only use neighbor **std** (lag1):
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --spatial-cov nbr8_std_lag1 --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
+```
+
 Outputs:
 - `panel_training_0426/outputs/panel_weekly_top100_2024_2025_topk2024_city_lag1_log1p.csv`
 - `panel_training_0426/outputs/panel_weekly_top100_manifest_topk2024_city_lag1_log1p.csv`

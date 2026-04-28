@@ -84,6 +84,14 @@ def main() -> None:
         "This option uses lagged features only.",
     )
     parser.add_argument(
+        "--spatial-cov",
+        default="none",
+        choices=["none", "nbr8_meanstd_lag1", "nbr8_std_lag1"],
+        help="Optional past-only spatial covariates using 8-neighborhood (Moore) aggregation. "
+        "nbr8_meanstd_lag1 adds mean/std of neighbors' visits from last week. "
+        "nbr8_std_lag1 adds only the neighbors' std from last week (more conservative).",
+    )
+    parser.add_argument(
         "--tag",
         default="",
         help="Optional experiment tag appended to output filenames (e.g. 'abl_city_lag1_topk2024').",
@@ -151,18 +159,23 @@ def main() -> None:
     city_total = df.groupby("week_start", as_index=False)["visits"].sum().rename(columns={"visits": "city_visits"})
     city_cov_df, city_cov_name = _make_city_cov(city_total, all_weeks, mode=str(args.city_cov))
 
-    for grid_id in top_ids:
-        g = df[df["grid_id"].astype(str) == str(grid_id)].sort_values("week_start").copy()
-        if g.empty:
-            continue
-        # static attrs
-        gx = int(g["gx"].iloc[0])
-        gy = int(g["gy"].iloc[0])
-        cell_lon = float(g["cell_lon"].iloc[0])
-        cell_lat = float(g["cell_lat"].iloc[0])
+    spatial_mode = str(args.spatial_cov).lower().strip()
+    want_spatial = spatial_mode != "none"
+    if want_spatial and spatial_mode not in {"nbr8_meanstd_lag1", "nbr8_std_lag1"}:
+        raise SystemExit(f"Unknown --spatial-cov={spatial_mode!r}. Choose from: none, nbr8_meanstd_lag1, nbr8_std_lag1")
 
-        # reindex weekly
-        g = g.set_index("week_start").reindex(all_weeks)
+    # --- Prebuild complete weekly series per grid (needed for spatial neighbor features) ---
+    grid_series: dict[str, pd.DataFrame] = {}
+    for grid_id in top_ids:
+        g0 = df[df["grid_id"].astype(str) == str(grid_id)].sort_values("week_start").copy()
+        if g0.empty:
+            continue
+        gx = int(g0["gx"].iloc[0])
+        gy = int(g0["gy"].iloc[0])
+        cell_lon = float(g0["cell_lon"].iloc[0])
+        cell_lat = float(g0["cell_lat"].iloc[0])
+
+        g = g0.set_index("week_start").reindex(all_weeks)
         g["grid_id"] = str(grid_id)
         g["gx"] = gx
         g["gy"] = gy
@@ -177,7 +190,66 @@ def main() -> None:
             g["weekday_visits"] = g["weekday_visits"].fillna(0.0).astype(np.float64)
             g["weekend_visits"] = g["weekend_visits"].fillna(0.0).astype(np.float64)
             g["weekend_share"] = g["weekend_share"].fillna(0.0).astype(np.float64)
+
         g = g.reset_index().rename(columns={"index": "week_start"})
+        grid_series[str(grid_id)] = g
+
+    # --- Spatial neighbor covariates (8-neighborhood) ---
+    if want_spatial:
+        # map (week_start, gx, gy) -> visits for the Top-K set
+        vmap: dict[tuple[pd.Timestamp, int, int], float] = {}
+        for gid, g in grid_series.items():
+            gx = int(g["gx"].iloc[0])
+            gy = int(g["gy"].iloc[0])
+            for wk, v in zip(pd.to_datetime(g["week_start"]).tolist(), g["visits"].tolist()):
+                vmap[(pd.Timestamp(wk).normalize(), gx, gy)] = float(v)
+
+        offsets = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+        for gid, g in grid_series.items():
+            gx = int(g["gx"].iloc[0])
+            gy = int(g["gy"].iloc[0])
+            means = []
+            stds = []
+            for wk in pd.to_datetime(g["week_start"]).tolist():
+                key_w = pd.Timestamp(wk).normalize()
+                nbr_vals = []
+                for dx, dy in offsets:
+                    k = (key_w, gx + dx, gy + dy)
+                    if k in vmap:
+                        nbr_vals.append(vmap[k])
+                if len(nbr_vals) == 0:
+                    means.append(0.0)
+                    stds.append(0.0)
+                else:
+                    arr = np.asarray(nbr_vals, dtype=np.float64)
+                    means.append(float(arr.mean()))
+                    stds.append(float(arr.std(ddof=0)))
+
+            g["nbr8_mean_visits"] = np.asarray(means, dtype=np.float64)
+            g["nbr8_std_visits"] = np.asarray(stds, dtype=np.float64)
+            # past-only lag1
+            g["nbr8_mean_visits_lag1"] = g["nbr8_mean_visits"].shift(1).fillna(0.0).astype(np.float64)
+            g["nbr8_std_visits_lag1"] = g["nbr8_std_visits"].shift(1).fillna(0.0).astype(np.float64)
+
+            grid_series[gid] = g
+
+    for grid_id in top_ids:
+        if str(grid_id) not in grid_series:
+            continue
+        g = grid_series[str(grid_id)].copy()
+        gx = int(g["gx"].iloc[0])
+        gy = int(g["gy"].iloc[0])
+        cell_lon = float(g["cell_lon"].iloc[0])
+        cell_lat = float(g["cell_lat"].iloc[0])
 
         # static stats from 2024 as covariates (interpretable heterogeneity features)
         g_2024 = g[(g["week_start"] >= pd.Timestamp("2024-01-01")) & (g["week_start"] <= pd.Timestamp("2024-12-31"))]
@@ -204,6 +276,13 @@ def main() -> None:
             else:
                 raise SystemExit(f"Unknown --weekend-cov={weekend_mode!r}. Choose from: none, share_lag1, components_lag1")
 
+        spatial_cov_names: list[str] = []
+        if want_spatial:
+            if spatial_mode == "nbr8_meanstd_lag1":
+                spatial_cov_names = ["nbr8_mean_visits_lag1", "nbr8_std_visits_lag1"]
+            else:
+                spatial_cov_names = ["nbr8_std_visits_lag1"]
+
         # target
         ot = g["visits"].to_numpy(dtype=np.float64)
         if args.target_transform == "log1p":
@@ -228,6 +307,8 @@ def main() -> None:
             if city_cov_name is not None:
                 row[city_cov_name] = float(g[city_cov_name].iloc[i])
             for nm in weekend_cov_names:
+                row[nm] = float(g[nm].iloc[i])
+            for nm in spatial_cov_names:
                 row[nm] = float(g[nm].iloc[i])
             out_rows.append(row)
 
@@ -259,7 +340,8 @@ def main() -> None:
     if not tag:
         city_tag = f"city_{args.city_cov}"
         wk_tag = f"wk_{args.weekend_cov}"
-        tag = f"topk{rank_year}_{city_tag}_{wk_tag}_{args.target_transform}"
+        sp_tag = f"sp_{args.spatial_cov}"
+        tag = f"topk{rank_year}_{city_tag}_{wk_tag}_{sp_tag}_{args.target_transform}"
     out_csv = out_dir / f"panel_weekly_top{int(args.top_k)}_{d0.year}_{d1.year}_{tag}.csv"
     panel.to_csv(out_csv, index=False)
 
