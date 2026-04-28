@@ -30,8 +30,16 @@ Outputs:
 
 ### Step 2. Train one shared Autoformer
 
+By default training runs the full `--epochs` with **no early stopping**. Pass **`--early-stop`** if you want to stop after validation loss fails to improve for **`--patience`** epochs.
+
 ```powershell
 .\.venv\Scripts\python.exe .\panel_training_0426\train_panel_autoformer.py --autoformer-root "E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer"
+```
+
+Default training loss is **Huber** on the scaled OT head (`--huber-delta 1.0`). Checkpoints go under a folder suffix like `..._log1p_huber1`. For a plain MSE baseline, pass **`--loss mse`** (folder name `..._log1p` only).
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\train_panel_autoformer.py --autoformer-root "<Autoformer_repo>" --loss mse
 ```
 
 This writes:

@@ -143,9 +143,9 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument(
-        "--no-early-stop",
+        "--early-stop",
         action="store_true",
-        help="Disable early stopping and always run all epochs.",
+        help="Stop when validation loss does not improve for --patience epochs (default: run all --epochs).",
     )
     parser.add_argument(
         "--resume",
@@ -155,7 +155,21 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--freq", default="w")
     parser.add_argument("--target-transform", default="log1p", choices=["none", "log1p"])
+    parser.add_argument(
+        "--loss",
+        default="huber",
+        choices=["mse", "huber"],
+        help="Training loss on scaled OT head (default: huber). mse = plain squared error on OT head.",
+    )
+    parser.add_argument(
+        "--huber-delta",
+        type=float,
+        default=1.0,
+        help="delta for torch.nn.HuberLoss when --loss huber (tune in scaled residual units).",
+    )
     args = parser.parse_args()
+    print(f"Running: {Path(__file__).resolve()}")
+    print(f"Parsed --loss: {args.loss!r}  --huber-delta: {args.huber_delta}")
 
     repo_root = Path(__file__).resolve().parents[1]
     panel_path = (repo_root / args.panel_csv).resolve()
@@ -227,7 +241,18 @@ def main() -> None:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = Autoformer.Model(_Args()).float().to(device)
     optim = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    crit = torch.nn.MSELoss()
+    loss_name = str(args.loss).lower().strip()
+    if loss_name == "mse":
+        crit = torch.nn.MSELoss()
+    elif loss_name == "huber":
+        crit = torch.nn.HuberLoss(delta=float(args.huber_delta), reduction="mean")
+    else:
+        raise SystemExit(f"Unknown --loss={args.loss!r}")
+
+    huber_suffix = ""
+    if loss_name == "huber":
+        d = float(args.huber_delta)
+        huber_suffix = "_" + f"huber{d:g}".replace(".", "p")
 
     def _run_val(loader: DataLoader) -> float:
         model.eval()
@@ -248,18 +273,23 @@ def main() -> None:
                 losses.append(float(loss.detach().cpu()))
         return float(np.mean(losses)) if losses else math.inf
 
-    # Training loop with simple early stopping on val loss
+    # Training loop; optional early stopping on val loss (--early-stop)
     best_val = math.inf
     bad = 0
     ckpt_dir = (repo_root / args.checkpoints_dir).resolve()
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    setting = f"panel_Autoformer_ftMS_sl{cfg.seq_len}_ll{cfg.label_len}_pl{cfg.pred_len}_dm128_el2_dl1_{cfg.target_transform}"
+    setting = (
+        f"panel_Autoformer_ftMS_sl{cfg.seq_len}_ll{cfg.label_len}_pl{cfg.pred_len}_dm128_el2_dl1_"
+        f"{cfg.target_transform}{huber_suffix}"
+    )
     out_path = ckpt_dir / setting
     out_path.mkdir(parents=True, exist_ok=True)
     ckpt_path = out_path / "checkpoint.pth"
 
     device_name = str(device)
     print(f"Using device: {device_name}")
+    print(f"Loss: {loss_name}" + (f" (delta={float(args.huber_delta):g})" if loss_name == "huber" else ""))
+    print(f"Early stopping: {'on' if args.early_stop else 'off (full --epochs)'}")
 
     if args.resume and ckpt_path.exists():
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
@@ -295,7 +325,7 @@ def main() -> None:
             torch.save(model.state_dict(), ckpt_path)
         else:
             bad += 1
-            if (not args.no_early_stop) and bad >= cfg.patience:
+            if args.early_stop and bad >= cfg.patience:
                 print("Early stopping.")
                 break
 
