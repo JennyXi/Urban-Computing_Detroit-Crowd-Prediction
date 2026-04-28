@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,12 @@ def main() -> None:
     parser.add_argument("--pred-len", type=int, default=4)
     parser.add_argument("--freq", default="w")
     parser.add_argument("--target-transform", default="log1p", choices=["none", "log1p"])
+    parser.add_argument(
+        "--stamp",
+        default=None,
+        help="Optional filename stamp (e.g. 20260428_103000). If omitted, a local timestamp is used. "
+        "Dated outputs are written in addition to the stable filenames.",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -112,6 +119,10 @@ def main() -> None:
     out_dir = (repo_root / args.out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    stamp = str(args.stamp).strip() if args.stamp is not None else ""
+    if not stamp:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     rows = []
     with torch.no_grad():
         for gid, g in df.groupby("grid_id", sort=False):
@@ -185,7 +196,9 @@ def main() -> None:
 
     out_long = pd.DataFrame(rows).sort_values(["grid_id", "date", "horizon", "window_start"]).reset_index(drop=True)
     long_path = out_dir / f"panel_pred_{args.scope}_{int(args.target_year)}_long.csv"
+    long_path_dated = out_dir / f"panel_pred_{args.scope}_{int(args.target_year)}_long_{stamp}.csv"
     out_long.to_csv(long_path, index=False)
+    out_long.to_csv(long_path_dated, index=False)
 
     by_date = (
         out_long.sort_values(["grid_id", "date", "window_start"])
@@ -199,10 +212,14 @@ def main() -> None:
         .sort_values(["date", "grid_id"])
     )
     by_date_path = out_dir / f"panel_pred_{args.scope}_{int(args.target_year)}_by_date.csv"
+    by_date_path_dated = out_dir / f"panel_pred_{args.scope}_{int(args.target_year)}_by_date_{stamp}.csv"
     by_date.to_csv(by_date_path, index=False)
+    by_date.to_csv(by_date_path_dated, index=False)
 
     print(f"Wrote: {long_path}")
     print(f"Wrote: {by_date_path}")
+    print(f"Wrote (dated): {long_path_dated}")
+    print(f"Wrote (dated): {by_date_path_dated}")
 
 
 if __name__ == "__main__":

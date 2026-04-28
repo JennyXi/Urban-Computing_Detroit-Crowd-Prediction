@@ -14,6 +14,7 @@ This folder builds a **panel dataset** from Top-K grids (default 100) and trains
 
 - Grid weekly parquet (long table): `data/grid100_weekly_2024_2025.parquet`
   - columns: `week_start, gx, gy, grid_id, visits, visitors, cell_lon, cell_lat`
+  - optional columns (if you enable weekend features during aggregation): `weekday_visits, weekend_visits, weekend_share`
 
 ### Step 1. Build panel CSV (Dataset_Custom style)
 
@@ -22,6 +23,20 @@ This creates a training table and a manifest:
 ```powershell
 cd "E:\Urban Computing Final Project\Try_0412"
 .\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
+```
+
+Optional (recommended): add **past-only** weekend signal `weekend_share_lag1` as a covariate channel.
+
+1) Rebuild grid-weekly parquet with weekend columns:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\aggregate_grid_weekly.py --date-start 2024-01-01 --date-end 2025-12-31 --cell-meters 100 --add-weekend-share --output data\grid100_weekly_2024_2025.parquet
+```
+
+2) Build panel with lagged weekend covariate:
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --weekend-cov share_lag1 --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
 ```
 
 Outputs:

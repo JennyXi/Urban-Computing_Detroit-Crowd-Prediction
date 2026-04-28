@@ -25,6 +25,34 @@ import pyarrow.parquet as pq
 from pyproj import Transformer
 
 
+def _parse_visits_by_day_fast(s: object) -> tuple[float, float]:
+    """
+    Parse VISITS_BY_DAY stored as a string like "[396,155,180,103,229,366,53]".
+    SafeGraph-style order is assumed to be Monday..Sunday (len=7).
+
+    Returns: (weekday_visits, weekend_visits).
+    """
+    if s is None or (isinstance(s, float) and not np.isfinite(s)):
+        return 0.0, 0.0
+    if not isinstance(s, str):
+        s = str(s)
+    s = s.strip()
+    if not s or s == "[]" or s.lower() == "none":
+        return 0.0, 0.0
+    if s[0] == "[" and s[-1] == "]":
+        s = s[1:-1]
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    if len(parts) != 7:
+        return 0.0, 0.0
+    try:
+        vals = [float(p) for p in parts]
+    except Exception:
+        return 0.0, 0.0
+    weekday = float(sum(vals[0:5]))
+    weekend = float(vals[5] + vals[6])
+    return weekday, weekend
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="POI-week Parquet -> grid x week (UTM 17N).")
     parser.add_argument(
@@ -38,6 +66,11 @@ def main() -> None:
     )
     parser.add_argument("--date-start", default="2025-01-01")
     parser.add_argument("--date-end", default="2025-12-31")
+    parser.add_argument(
+        "--add-weekend-share",
+        action="store_true",
+        help="If set, parse VISITS_BY_DAY and output weekday/weekend visits and weekend_share per grid-week.",
+    )
     parser.add_argument(
         "--cell-meters",
         type=float,
@@ -63,10 +96,16 @@ def main() -> None:
     to_proj = Transformer.from_crs("EPSG:4326", f"EPSG:{args.epsg}", always_xy=True)
     to_wgs = Transformer.from_crs(f"EPSG:{args.epsg}", "EPSG:4326", always_xy=True)
 
-    # Partial sums per (week, gx, gy): visits, visitors, count of POI-rows (optional)
-    acc: dict[tuple[pd.Timestamp, int, int], list[float]] = defaultdict(lambda: [0.0, 0.0])
+    # Partial sums per (week, gx, gy):
+    # visits, visitors, and optional weekday/weekend visits derived from VISITS_BY_DAY.
+    if args.add_weekend_share:
+        acc: dict[tuple[pd.Timestamp, int, int], list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0, 0.0])
+    else:
+        acc = defaultdict(lambda: [0.0, 0.0])
 
     cols = ["DATE_RANGE_START", "LATITUDE", "LONGITUDE", "VISIT_COUNTS", "VISITOR_COUNTS"]
+    if args.add_weekend_share:
+        cols.append("VISITS_BY_DAY")
     pf = pq.ParquetFile(inp)
 
     for batch in pf.iter_batches(columns=cols, batch_size=args.batch_rows):
@@ -94,37 +133,52 @@ def main() -> None:
         sub = sub.assign(_wk=wk.values, _gx=gx, _gy=gy)
         sub["VISIT_COUNTS"] = sub["VISIT_COUNTS"].fillna(0).astype(np.float64)
         sub["VISITOR_COUNTS"] = sub["VISITOR_COUNTS"].fillna(0).astype(np.float64)
-        part = (
-            sub.groupby(["_wk", "_gx", "_gy"], sort=False)[["VISIT_COUNTS", "VISITOR_COUNTS"]]
-            .sum()
-            .reset_index()
-        )
+        if args.add_weekend_share:
+            parsed = sub["VISITS_BY_DAY"].map(_parse_visits_by_day_fast)
+            sub["_weekday_visits"] = parsed.map(lambda t: t[0]).astype(np.float64)
+            sub["_weekend_visits"] = parsed.map(lambda t: t[1]).astype(np.float64)
+        sum_cols = ["VISIT_COUNTS", "VISITOR_COUNTS"]
+        if args.add_weekend_share:
+            sum_cols += ["_weekday_visits", "_weekend_visits"]
+        part = sub.groupby(["_wk", "_gx", "_gy"], sort=False)[sum_cols].sum().reset_index()
         for _, r in part.iterrows():
             key = (pd.Timestamp(r["_wk"]), int(r["_gx"]), int(r["_gy"]))
             a = acc[key]
             a[0] += float(r["VISIT_COUNTS"])
             a[1] += float(r["VISITOR_COUNTS"])
+            if args.add_weekend_share:
+                a[2] += float(r["_weekday_visits"])
+                a[3] += float(r["_weekend_visits"])
 
     if not acc:
         raise SystemExit("No rows aggregated. Check date range, lat/lon, and input path.")
 
     rows = []
-    for (week, gx, gy), (visits, visitors) in sorted(acc.items()):
+    for (week, gx, gy), vals in sorted(acc.items()):
+        visits = float(vals[0])
+        visitors = float(vals[1])
+        weekday_visits = float(vals[2]) if args.add_weekend_share else None
+        weekend_visits = float(vals[3]) if args.add_weekend_share else None
         cx = (gx + 0.5) * cell
         cy = (gy + 0.5) * cell
         clon, clat = to_wgs.transform(cx, cy)
-        rows.append(
-            {
-                "week_start": week,
-                "gx": gx,
-                "gy": gy,
-                "grid_id": f"{gx}_{gy}",
-                "visits": visits,
-                "visitors": visitors,
-                "cell_lon": clon,
-                "cell_lat": clat,
-            }
-        )
+        row = {
+            "week_start": week,
+            "gx": gx,
+            "gy": gy,
+            "grid_id": f"{gx}_{gy}",
+            "visits": visits,
+            "visitors": visitors,
+            "cell_lon": clon,
+            "cell_lat": clat,
+        }
+        if args.add_weekend_share:
+            eps = 1e-9
+            row["weekday_visits"] = float(weekday_visits or 0.0)
+            row["weekend_visits"] = float(weekend_visits or 0.0)
+            denom = float((weekday_visits or 0.0) + (weekend_visits or 0.0))
+            row["weekend_share"] = float((weekend_visits or 0.0) / (denom + eps))
+        rows.append(row)
 
     out_df = pd.DataFrame(rows)
     out_df.to_parquet(out, index=False)

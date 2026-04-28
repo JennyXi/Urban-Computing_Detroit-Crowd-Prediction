@@ -76,6 +76,14 @@ def main() -> None:
         "Use lag/rolling variants to avoid using future/unavailable contemporaneous totals.",
     )
     parser.add_argument(
+        "--weekend-cov",
+        default="none",
+        choices=["none", "share_lag1", "components_lag1"],
+        help="Optional past-only weekend/weekday covariates derived from VISITS_BY_DAY at aggregation time. "
+        "IMPORTANT: do NOT use contemporaneous weekend_share as a same-week covariate (it leaks target). "
+        "This option uses lagged features only.",
+    )
+    parser.add_argument(
         "--tag",
         default="",
         help="Optional experiment tag appended to output filenames (e.g. 'abl_city_lag1_topk2024').",
@@ -96,7 +104,17 @@ def main() -> None:
     if not inp.exists():
         raise SystemExit(f"Missing input parquet: {inp}")
 
-    cols = ["week_start", "grid_id", "visits", "visitors", "cell_lon", "cell_lat", "gx", "gy"]
+    base_cols = ["week_start", "grid_id", "visits", "visitors", "cell_lon", "cell_lat", "gx", "gy"]
+    weekend_mode = str(args.weekend_cov).lower().strip()
+    want_weekend = weekend_mode != "none"
+    extra_cols = ["weekday_visits", "weekend_visits", "weekend_share"] if want_weekend else []
+    schema_cols = set(pq.ParquetFile(inp).schema.names)
+    cols = base_cols + [c for c in extra_cols if c in schema_cols]
+    if want_weekend and not set(extra_cols).issubset(schema_cols):
+        raise SystemExit(
+            "Requested --weekend-cov but input parquet is missing weekend columns. "
+            "Rebuild grid-weekly parquet with: scripts/aggregate_grid_weekly.py --add-weekend-share"
+        )
     df = pq.read_table(inp, columns=cols).to_pandas()
     df["week_start"] = pd.to_datetime(df["week_start"])
     d0 = pd.Timestamp(args.date_start).normalize()
@@ -152,6 +170,13 @@ def main() -> None:
         g["cell_lat"] = cell_lat
         g["visits"] = g["visits"].fillna(0.0).astype(np.float64)
         g["visitors"] = g["visitors"].fillna(0.0).astype(np.float64)
+        if want_weekend:
+            g["weekday_visits"] = g.get("weekday_visits", 0.0)
+            g["weekend_visits"] = g.get("weekend_visits", 0.0)
+            g["weekend_share"] = g.get("weekend_share", 0.0)
+            g["weekday_visits"] = g["weekday_visits"].fillna(0.0).astype(np.float64)
+            g["weekend_visits"] = g["weekend_visits"].fillna(0.0).astype(np.float64)
+            g["weekend_share"] = g["weekend_share"].fillna(0.0).astype(np.float64)
         g = g.reset_index().rename(columns={"index": "week_start"})
 
         # static stats from 2024 as covariates (interpretable heterogeneity features)
@@ -164,6 +189,20 @@ def main() -> None:
         if city_cov_name is not None:
             g = g.merge(city_cov_df, on="week_start", how="left")
             g[city_cov_name] = g[city_cov_name].fillna(0.0).astype(np.float64)
+
+        # grid-level weekend covariates (past-only)
+        weekend_cov_names: list[str] = []
+        if want_weekend:
+            if weekend_mode == "share_lag1":
+                g["weekend_share_lag1"] = g["weekend_share"].shift(1).fillna(0.0).astype(np.float64)
+                weekend_cov_names = ["weekend_share_lag1"]
+            elif weekend_mode == "components_lag1":
+                g["weekday_visits_lag1"] = g["weekday_visits"].shift(1).fillna(0.0).astype(np.float64)
+                g["weekend_visits_lag1"] = g["weekend_visits"].shift(1).fillna(0.0).astype(np.float64)
+                g["weekend_share_lag1"] = g["weekend_share"].shift(1).fillna(0.0).astype(np.float64)
+                weekend_cov_names = ["weekday_visits_lag1", "weekend_visits_lag1", "weekend_share_lag1"]
+            else:
+                raise SystemExit(f"Unknown --weekend-cov={weekend_mode!r}. Choose from: none, share_lag1, components_lag1")
 
         # target
         ot = g["visits"].to_numpy(dtype=np.float64)
@@ -188,6 +227,8 @@ def main() -> None:
             }
             if city_cov_name is not None:
                 row[city_cov_name] = float(g[city_cov_name].iloc[i])
+            for nm in weekend_cov_names:
+                row[nm] = float(g[nm].iloc[i])
             out_rows.append(row)
 
         static_rows.append(
@@ -217,7 +258,8 @@ def main() -> None:
     tag = str(args.tag).strip()
     if not tag:
         city_tag = f"city_{args.city_cov}"
-        tag = f"topk{rank_year}_{city_tag}_{args.target_transform}"
+        wk_tag = f"wk_{args.weekend_cov}"
+        tag = f"topk{rank_year}_{city_tag}_{wk_tag}_{args.target_transform}"
     out_csv = out_dir / f"panel_weekly_top{int(args.top_k)}_{d0.year}_{d1.year}_{tag}.csv"
     panel.to_csv(out_csv, index=False)
 
