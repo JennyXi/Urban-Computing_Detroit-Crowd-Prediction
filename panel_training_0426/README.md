@@ -27,6 +27,27 @@ cd "E:\Urban Computing Final Project\Try_0412"
 
 Default build enables a conservative spatial lag feature (**`nbr8_std_visits_lag1`**) and keeps weekend covariates off.
 
+Optional: attach **static POI supply indices** per grid (built from the raw POI-week parquet).
+This is useful for studying crowd vs infrastructure alignment (underserved grids).
+
+1) Build grid-level POI indices (recommended: ref-year=2024 for non-leakage):
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\build_grid_poi_static.py --ref-year 2024 --cell-meters 100 --output data\grid100_poi_static_2024.parquet
+```
+
+2) Build panel and merge POI indices by `grid_id`:
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\build_panel_weekly_dataset.py --poi-static data\grid100_poi_static_2024.parquet --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
+```
+
+3) (QGIS) Export POI indices as a grid layer (GPKG) with an attribute table:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\export_grid_poi_static_gpkg.py --grid-weekly data\grid100_weekly_2024_2025.parquet --poi-static data\grid100_poi_static_2024.parquet --output data\grid100_poi_static_2024.gpkg
+```
+
 Optional: add **past-only** weekend signal `weekend_share_lag1` as a covariate channel.
 
 1) Rebuild grid-weekly parquet with weekend columns:
