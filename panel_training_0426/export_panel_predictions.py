@@ -11,11 +11,11 @@ import torch
 from sklearn.preprocessing import StandardScaler
 
 
-def _custom_split(n: int, seq_len: int, pred_len: int):
-    num_train = int(n * 0.7)
-    num_test = int(n * 0.2)
-    num_val = n - num_train - num_test
-    border1s = (0, num_train - seq_len, n - num_test - seq_len)
+def _custom_split(n: int, seq_len: int, pred_len: int, train_ratio: float, val_ratio: float, test_ratio: float):
+    num_train = int(round(n * float(train_ratio)))
+    num_val = int(round(n * float(val_ratio)))
+    num_test = n - num_train - num_val
+    border1s = (0, num_train - seq_len, num_train + num_val - seq_len)
     border2s = (num_train, num_train + num_val, n)
     return border1s, border2s
 
@@ -79,6 +79,9 @@ def main() -> None:
         choices=["ratio", "year"],
         help="Must match training. year: strict train<=train_end, test>=test_start.",
     )
+    parser.add_argument("--train-ratio", type=float, default=0.7, help="Used when --split-mode ratio.")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Used when --split-mode ratio.")
+    parser.add_argument("--test-ratio", type=float, default=0.15, help="Used when --split-mode ratio.")
     parser.add_argument("--train-end", default="2024-12-31")
     parser.add_argument("--test-start", default="2025-01-01")
     parser.add_argument("--val-weeks", type=int, default=10)
@@ -89,6 +92,12 @@ def main() -> None:
         "Dated outputs are written in addition to the stable filenames.",
     )
     args = parser.parse_args()
+    ratio_sum = float(args.train_ratio) + float(args.val_ratio) + float(args.test_ratio)
+    if abs(ratio_sum - 1.0) > 1e-8:
+        raise SystemExit(
+            f"train/val/test ratios must sum to 1.0, got {ratio_sum:.6f} "
+            f"({args.train_ratio}, {args.val_ratio}, {args.test_ratio})."
+        )
 
     repo_root = Path(__file__).resolve().parents[1]
     panel_path = (repo_root / args.panel_csv).resolve()
@@ -131,7 +140,14 @@ def main() -> None:
         g = g.sort_values("date").reset_index(drop=True)
         n = len(g)
         if sm == "ratio":
-            border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
+            border1s, border2s = _custom_split(
+                n,
+                args.seq_len,
+                args.pred_len,
+                float(args.train_ratio),
+                float(args.val_ratio),
+                float(args.test_ratio),
+            )
             mats.append(g.loc[border1s[0] : border2s[0] - 1, cols_data])
         else:
             _tr, _va, _te, end_excl = _year_split_g0s(
@@ -181,7 +197,14 @@ def main() -> None:
             g = g.sort_values("date").reset_index(drop=True)
             n = len(g)
             if sm == "ratio":
-                border1s, border2s = _custom_split(n, args.seq_len, args.pred_len)
+                border1s, border2s = _custom_split(
+                    n,
+                    args.seq_len,
+                    args.pred_len,
+                    float(args.train_ratio),
+                    float(args.val_ratio),
+                    float(args.test_ratio),
+                )
                 if args.scope == "train":
                     border1, border2 = border1s[0], border2s[0]
                 elif args.scope == "val":

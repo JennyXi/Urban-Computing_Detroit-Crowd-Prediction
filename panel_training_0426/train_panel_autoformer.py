@@ -41,6 +41,9 @@ class PanelWindows(Dataset):
         train_end: str = "2024-12-31",
         test_start: str = "2025-01-01",
         val_weeks: int = 10,
+        train_ratio: float = 0.7,
+        val_ratio: float = 0.15,
+        test_ratio: float = 0.15,
     ):
         assert split in {"train", "val", "test"}
         assert split_mode in {"ratio", "year"}
@@ -101,17 +104,21 @@ class PanelWindows(Dataset):
                         train_g0s.append(g0)
             return train_g0s, val_g0s, test_g0s
 
+        def _ratio_split_borders(n: int) -> tuple[list[int], list[int]]:
+            num_train = int(round(n * float(train_ratio)))
+            num_val = int(round(n * float(val_ratio)))
+            num_test = n - num_train - num_val
+            border1s = [0, num_train - cfg.seq_len, num_train + num_val - cfg.seq_len]
+            border2s = [num_train, num_train + num_val, n]
+            return border1s, border2s
+
         # Build window indices
         self.indices: list[tuple[str, int]] = []  # (gid, g0)
         if split_mode == "ratio":
-            # Dataset_Custom-style borders per grid (70/10/20)
+            # Dataset_Custom-style borders per grid (configurable train/val/test ratios)
             for gid, g in self.series.items():
                 n = len(g)
-                num_train = int(n * 0.7)
-                num_test = int(n * 0.2)
-                num_val = n - num_train - num_test
-                border1s = [0, num_train - cfg.seq_len, n - num_test - cfg.seq_len]
-                border2s = [num_train, num_train + num_val, n]
+                border1s, border2s = _ratio_split_borders(n)
                 if split == "train":
                     border1, border2 = border1s[0], border2s[0]
                 elif split == "val":
@@ -139,7 +146,7 @@ class PanelWindows(Dataset):
             if split_mode == "ratio":
                 for gid, g in self.series.items():
                     n = len(g)
-                    num_train = int(n * 0.7)
+                    num_train = int(round(n * float(train_ratio)))
                     # fit on [0:num_train]
                     train_rows.append(g.loc[: num_train - 1, self.cols_data])
             else:
@@ -221,8 +228,11 @@ def main() -> None:
         "--split-mode",
         default="year",
         choices=["ratio", "year"],
-        help="ratio: 70/10/20 split per grid timeline. year: strict train<=train_end, test>=test_start (no 2025 leakage).",
+        help="ratio: configurable train/val/test split per grid timeline. year: strict train<=train_end, test>=test_start.",
     )
+    parser.add_argument("--train-ratio", type=float, default=0.7, help="Used when --split-mode ratio.")
+    parser.add_argument("--val-ratio", type=float, default=0.15, help="Used when --split-mode ratio.")
+    parser.add_argument("--test-ratio", type=float, default=0.15, help="Used when --split-mode ratio.")
     parser.add_argument("--train-end", default="2024-12-31", help="Used when --split-mode year.")
     parser.add_argument("--test-start", default="2025-01-01", help="Used when --split-mode year.")
     parser.add_argument(
@@ -244,6 +254,12 @@ def main() -> None:
         help="delta for torch.nn.HuberLoss when --loss huber (tune in scaled residual units).",
     )
     args = parser.parse_args()
+    ratio_sum = float(args.train_ratio) + float(args.val_ratio) + float(args.test_ratio)
+    if abs(ratio_sum - 1.0) > 1e-8:
+        raise SystemExit(
+            f"train/val/test ratios must sum to 1.0, got {ratio_sum:.6f} "
+            f"({args.train_ratio}, {args.val_ratio}, {args.test_ratio})."
+        )
     print(f"Running: {Path(__file__).resolve()}")
     print(f"Parsed --loss: {args.loss!r}  --huber-delta: {args.huber_delta}")
 
@@ -292,6 +308,9 @@ def main() -> None:
         train_end=str(args.train_end),
         test_start=str(args.test_start),
         val_weeks=int(args.val_weeks),
+        train_ratio=float(args.train_ratio),
+        val_ratio=float(args.val_ratio),
+        test_ratio=float(args.test_ratio),
     )
     scaler = train_ds.scaler
     val_ds = PanelWindows(
@@ -305,6 +324,9 @@ def main() -> None:
         train_end=str(args.train_end),
         test_start=str(args.test_start),
         val_weeks=int(args.val_weeks),
+        train_ratio=float(args.train_ratio),
+        val_ratio=float(args.val_ratio),
+        test_ratio=float(args.test_ratio),
     )
     test_ds = PanelWindows(
         df=df,
@@ -317,6 +339,9 @@ def main() -> None:
         train_end=str(args.train_end),
         test_start=str(args.test_start),
         val_weeks=int(args.val_weeks),
+        train_ratio=float(args.train_ratio),
+        val_ratio=float(args.val_ratio),
+        test_ratio=float(args.test_ratio),
     )
     if sm == "year":
         if len(train_ds) == 0:
@@ -407,7 +432,13 @@ def main() -> None:
     print(f"Using device: {device_name}")
     print(f"Loss: {loss_name}" + (f" (delta={float(args.huber_delta):g})" if loss_name == "huber" else ""))
     print(f"Early stopping: {'on' if args.early_stop else 'off (full --epochs)'}")
-    print(f"Split mode: {sm}" + (f"  train_end={args.train_end}  test_start={args.test_start}  val_weeks={args.val_weeks}" if sm == "year" else ""))
+    if sm == "year":
+        print(f"Split mode: {sm}  train_end={args.train_end}  test_start={args.test_start}  val_weeks={args.val_weeks}")
+    else:
+        print(
+            f"Split mode: {sm}  train_ratio={args.train_ratio}  "
+            f"val_ratio={args.val_ratio}  test_ratio={args.test_ratio}"
+        )
 
     if args.resume and ckpt_path.exists():
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
