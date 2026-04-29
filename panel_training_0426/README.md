@@ -99,6 +99,28 @@ Default training loss is **Huber** on the scaled OT head (`--huber-delta 1.0`). 
 This writes:
 - `panel_training_0426/checkpoints/<setting>/checkpoint.pth`
 
+### Daily variant (Top-K grids, shared model)
+
+If you have daily grid parquet (`data/grid100_daily_2024_2025.parquet`), you can build a daily panel CSV:
+
+```powershell
+.\.venv\Scripts\python.exe .\panel_training_0426\build_panel_daily_dataset.py --top-k 100 --date-start 2024-01-01 --date-end 2025-12-31
+```
+
+Train a daily model with **ratio split** (train/val/test = 0.7/0.15/0.15) using the same Autoformer architecture as weekly:
+
+```powershell
+.\.venv\Scripts\python.exe -u .\panel_training_0426\train_panel_autoformer_daily_ratio.py --autoformer-root "E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer"
+```
+
+Defaults (overrideable): `freq=d`, `split-mode=ratio`, `seq_len=84`, `label_len=42`, `pred_len=14`.
+
+Export **2025 full-year** daily predictions (scope=test by default):
+
+```powershell
+.\.venv\Scripts\python.exe -u .\panel_training_0426\export_panel_predictions_daily_ratio.py --autoformer-root "E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer"
+```
+
 ### Step 3. Export predictions (2025) and validate
 
 Export rolling forecasts or strict test:
