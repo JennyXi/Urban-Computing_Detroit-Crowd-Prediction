@@ -14,6 +14,18 @@ This folder contains **grid-aligned POI static indices** for QGIS visualization 
 - `grid100_poi_static_2024.parquet`
   - Same attributes as above (tabular), keyed by `grid_id`.
 
+- `compute_alignment.py`
+  - Builds crowd-POI alignment from prediction CSV + static POI parquet.
+  - Current default (recommended main run): `--ridge-alpha 0.1 --target-log1p`.
+  - Input features are the 4 POI counts (`poi_cnt_life`, `poi_cnt_transport`, `poi_cnt_economy`, `poi_cnt_public_service`), with `log1p` feature transform enabled by default.
+  - Writes per-grid `c_bar`, `c_hat`, `r_alignment` and fit metrics JSON (RMSE/MAE/MedAE/SMAPE/R2).
+
+- `summarize_alignment.py`
+  - Summarizes alignment outputs and writes top positive/negative mismatch tables.
+  - For high-mismatch candidates, exports both:
+    - `priority_abs_*`: absolute-count scarcity priority
+    - `priority_q_*`: within-high-mismatch-group quantile scarcity priority (**recommended**)
+
 ### How it was built (repro)
 
 ```powershell
@@ -25,4 +37,23 @@ cd "E:\Urban Computing Final Project\Try_0412"
 # 2) Export QGIS layer (GPKG)
 .\.venv\Scripts\python.exe .\scripts\export_grid_poi_static_gpkg.py --grid-weekly data\grid100_weekly_2024_2025.parquet --poi-static data\grid100_poi_static_2024.parquet --output data\grid100_poi_static_2024.gpkg
 ```
+
+### Alignment run (Oct-Dec 2025 example)
+
+```powershell
+cd "E:\Urban Computing Final Project\Try_0412"
+
+# Main model (recommended): robust ranking with target log1p + alpha=0.1
+.\.venv\Scripts\python.exe .\POI_Alignment_0429\compute_alignment.py
+
+# Summaries + planning priority tables
+.\.venv\Scripts\python.exe .\POI_Alignment_0429\summarize_alignment.py
+```
+
+### Sensitivity reference
+
+- Main model (recommended for ranking stability):
+  - `--target-log1p --ridge-alpha 0.1`
+- Robustness check (higher variance explanation baseline):
+  - `--no-target-log1p --ridge-alpha 1`
 

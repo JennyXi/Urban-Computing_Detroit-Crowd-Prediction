@@ -8,6 +8,24 @@ CSCI-SHU 205 Topics in Computer Science · Urban Computing Final Project (Spring
 
 ### 当前工作流、操作方法与目标效果
 
+#### Weekly 封版状态（2026-04-29）
+
+- 当前主线已完成 **Weekly crowd prediction + POI alignment** 的封版（Top-100 grids 范围）。
+- 封版默认参数（`POI_Alignment_0429/compute_alignment.py`）：
+  - 时间窗：`2025-10-01` ~ `2025-12-31`
+  - 预测列：`y_pred_mean`
+  - 特征：四类 POI 计数（默认 `log1p`）
+  - 模型：Ridge `alpha=0.1` + `target_log1p=true`
+- 约束筛选（action gates）已启用：
+  - `r_alignment >= P80`
+  - `n_weeks >= 12`
+  - `c_bar >= P50`
+  - `priority_q_1_scarcity_score >= 0.7`
+- 当前主窗结果：`tier1_actionable=10`, `tier2_watchlist=10`。
+- 跨季稳健性（Q3 vs Q4）：
+  - actionable 重叠 9/11（Jaccard=0.8182）
+  - 重叠格 `priority_q_1` 一致 9/9
+
 #### 工作流（你现在在用的这条线）
 
 1. **原始数据 → Detroit 范围**：用 `scripts/filter_detroit_duckdb.py` 得到 `data/detroit_filtered.parquet`（体积大，一般不提交 git）。  
@@ -15,6 +33,7 @@ CSCI-SHU 205 Topics in Computer Science · Urban Computing Final Project (Spring
 3. **Panel 表**：`panel_training_0426/build_panel_weekly_dataset.py` 选出 **Top-K 热门格**（默认按 **2024** 总 visits 排名，避免用 2025 选格的信息泄漏），补全每周、拼上 **仅用过去可得** 的城市尺度协变量（默认 `lag1`），可选 **`log1p(OT)`** 作为训练目标列 `OT`。  
 4. **训练**：`panel_training_0426/train_panel_autoformer.py` 调用官方 Autoformer，在 **多网格长表** 上滑窗：**过去若干周 → 预测未来若干周**（默认 `seq_len=24`, `label_len=12`, `pred_len=4`）；**默认 Huber 损失**、**默认跑满 `--epochs`**（不加 `--early-stop` 则不会早停）；验证变好时写入 `checkpoint.pth`。  
 5. **导出与对照实际**：`export_panel_predictions.py` 写出每个 `grid_id`、每个预测周的 **`y_true`（来自数据）与 `y_pred_*`**；再用 `use_official_autoformer_grid/validate_grid_predictions.py` 汇总 **整体 / 按格 / 按周** 的 MAE、RMSE、sMAPE、R² 等，并可筛 **2025** 日期只看外推段。
+6. **POI 对齐（已接入）**：`POI_Alignment_0429/compute_alignment.py` 以多周平均预测 crowd（`c_bar`）对 POI-only 期望 crowd（`c_hat`）做残差 `r_alignment=c_bar-c_hat`；`summarize_alignment.py` 输出 Top 错配、优先补建类别（`priority_q_1/2`）及可行动分层（`tier1_actionable/tier2_watchlist`）。
 
 （若做 **按格单独 Autoformer** 基线，则走 `use_official_autoformer_grid/`，与 Panel 并行对比。）
 
@@ -35,6 +54,7 @@ CSCI-SHU 205 Topics in Computer Science · Urban Computing Final Project (Spring
 - **数值上**：在测试/外推段上，**整体** RMSE、MAE、R²、相关系数合理；**按格** 能看出多数 Top-K 格预测与真实周序形状一致；**最差若干格/若干周** 可定位、可解释（活动、体量阶跃等），而不是「全盘不可学」。  
 - **方法上**：同一套 **滑窗 + 共享参数** 在 **多格** 上成立；可选对比 **Huber vs MSE**、**有无城市协变量**、不同 **`--city-cov`**，用同一验证脚本输出表格与 `best/worst_grids_topN`。  
 - **报告/答辩上**：能说清 **数据怎么来、Top-K 怎么选、协变量为什么只用滞后、预测与真实怎么比、误差主要来自哪些格/周**。
+- **规划落地上**：在 Top-100 热点格中，给出“**哪里错配高 + 更建议补哪类 POI**”的可行动清单，并与观察清单分层展示（tier1/tier2）。
 
 ---
 
@@ -140,6 +160,24 @@ python scripts/visualize_grid_osm.py --input data/grid100_weekly_2024_2025.parqu
 
 ### Current workflow, how-to, and intended outcomes
 
+#### Weekly freeze status (2026-04-29)
+
+- The weekly track is now frozen for **weekly crowd prediction + POI alignment** (Top-100 grids scope).
+- Freeze defaults (`POI_Alignment_0429/compute_alignment.py`):
+  - Window: `2025-10-01` ~ `2025-12-31`
+  - Prediction column: `y_pred_mean`
+  - Features: 4 POI counts (with default `log1p`)
+  - Model: Ridge `alpha=0.1` + `target_log1p=true`
+- Action gates are enabled:
+  - `r_alignment >= P80`
+  - `n_weeks >= 12`
+  - `c_bar >= P50`
+  - `priority_q_1_scarcity_score >= 0.7`
+- Main-window split: `tier1_actionable=10`, `tier2_watchlist=10`.
+- Cross-window stability (Q3 vs Q4):
+  - actionable overlap Jaccard = `0.8182`
+  - primary type consistency (`priority_q_1`) = `9/9` on overlap
+
 #### Workflow (the track you are using)
 
 1. **Raw → Detroit subset**: `scripts/filter_detroit_duckdb.py` → `data/detroit_filtered.parquet` (large; usually git-ignored).  
@@ -147,6 +185,7 @@ python scripts/visualize_grid_osm.py --input data/grid100_weekly_2024_2025.parqu
 3. **Panel CSV**: `panel_training_0426/build_panel_weekly_dataset.py` selects **Top-K grids** (default: rank by **2024** total visits to avoid target-year selection leakage), fills missing weeks, adds **past-only** city-level covariates (default `lag1`), optional **`log1p`** on `OT` for training stability.  
 4. **Train**: `train_panel_autoformer.py` calls the official Autoformer on the panel: **past L weeks → forecast H weeks** (defaults `seq_len=24`, `label_len=12`, `pred_len=4`). **Huber loss by default**, **full `--epochs` by default** (no early stopping unless `--early-stop`); `checkpoint.pth` updates when validation improves.  
 5. **Export vs ground truth**: `export_panel_predictions.py` writes per-`grid_id`, per-date **`y_true` (from data) and `y_pred_*`**; `use_official_autoformer_grid/validate_grid_predictions.py` aggregates **global / per-grid / per-date** MAE, RMSE, sMAPE, R², etc., with optional **2025-only** filters.
+6. **POI alignment (integrated)**: `POI_Alignment_0429/compute_alignment.py` fits POI-only expected crowd (`c_hat`) against multi-week mean predicted crowd (`c_bar`) and computes `r_alignment=c_bar-c_hat`; `summarize_alignment.py` exports top mismatch grids, recommended POI type (`priority_q_1/2`), and action tiers (`tier1_actionable/tier2_watchlist`).
 
 (For a **one-model-per-grid** baseline, use `use_official_autoformer_grid/` in parallel.)
 
@@ -167,6 +206,7 @@ Full copy-paste commands: **`panel_training_0426/README.md`**. The **`scripts/`*
 - **Metrics**: reasonable global RMSE/MAE/R²/corr on the held-out / exported segment; per-grid diagnostics show most Top-K grids follow the true weekly pattern; worst grids/dates are **identifiable and interpretable** (events, scale shifts), not a fully broken model.  
 - **Method**: one **shared** Autoformer with sliding windows works **across grids**; you can compare **Huber vs MSE**, **city cov on/off**, and **`--city-cov` variants** with the same validator (`best/worst_grids_topN`, etc.).  
 - **Write-up / defense**: a clear story—**data provenance, Top-K rule, why covariates are lagged only, how preds are compared to truth, where errors concentrate**.
+- **Planning outputs**: an actionable mismatch list in Top-100 hotspots with suggested POI category priorities and watchlist separation (tier1/tier2).
 
 ---
 

@@ -1,0 +1,36 @@
+{
+  "n_grids": 100,
+  "top_n": 20,
+  "high_positive_quantile": 0.8,
+  "r_alignment": {
+    "mean": 8943.753132696338,
+    "std": 48677.19283966703,
+    "min": -88552.33674111794,
+    "p10": -10343.44152127186,
+    "p25": -6572.360688140547,
+    "p50": -2258.2792703689483,
+    "p75": 4750.908560798857,
+    "p90": 30000.173819789925,
+    "max": 282615.5794372675
+  },
+  "thresholds": {
+    "high_positive_ge": 10057.867697292253,
+    "high_negative_le": -7153.953750286761
+  },
+  "action_gates": {
+    "r_alignment_quantile": 0.8,
+    "min_weeks": 12,
+    "c_bar_quantile": 0.5,
+    "scarcity_q_min": 0.7
+  },
+  "action_threshold_values": {
+    "r_alignment_ge": 10057.867697292253,
+    "c_bar_ge": 19541.953087439906,
+    "min_weeks": 12,
+    "priority_q_1_scarcity_ge": 0.7
+  },
+  "action_counts": {
+    "tier1_actionable": 10,
+    "tier2_watchlist": 10
+  }
+}
