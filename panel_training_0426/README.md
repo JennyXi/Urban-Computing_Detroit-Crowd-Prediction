@@ -113,7 +113,7 @@ Train a daily model with **ratio split** (train/val/test = 0.7/0.15/0.15) using 
 .\.venv\Scripts\python.exe -u .\panel_training_0426\train_panel_autoformer_daily_ratio.py --autoformer-root "E:\Urban Computing Final Project\autoformer_spatial_0425\Autoformer"
 ```
 
-Defaults (overrideable): `freq=d`, `split-mode=ratio`, `seq_len=84`, `label_len=42`, `pred_len=14`.
+Defaults (overrideable): `freq=d`, `split-mode=ratio`, `seq_len=84`, `label_len=42`, `pred_len=14`, `lr=5e-5`, `batch_size=24`, `epochs=40`, `early-stop` with `patience=12`, `d_model=192`, `d_ff=768`, `dropout=0.08`, `moving_avg=7`, `weight_decay=1e-4`, `grad_clip_norm=1.0`. Checkpoints save under a folder name that includes `dm…_el…_dl…_ma…` (must match when exporting).
 
 Export **2025 full-year** daily predictions (scope=test by default):
 

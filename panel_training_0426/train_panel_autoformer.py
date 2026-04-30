@@ -253,6 +253,30 @@ def main() -> None:
         default=1.0,
         help="delta for torch.nn.HuberLoss when --loss huber (tune in scaled residual units).",
     )
+    parser.add_argument("--d-model", type=int, default=128, help="Autoformer d_model (hidden size).")
+    parser.add_argument("--n-heads", type=int, default=8, help="Attention heads (d_model must be divisible by n_heads).")
+    parser.add_argument("--e-layers", type=int, default=2, help="Encoder layers.")
+    parser.add_argument("--d-layers", type=int, default=1, help="Decoder layers.")
+    parser.add_argument("--d-ff", type=int, default=512, help="FFN hidden size.")
+    parser.add_argument("--dropout", type=float, default=0.05, help="Dropout probability.")
+    parser.add_argument(
+        "--moving-avg",
+        type=int,
+        default=25,
+        help="Series decomposition moving-average kernel length (use ~7 for daily weekly seasonality).",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="AdamW-style L2 penalty on weights (0 disables).",
+    )
+    parser.add_argument(
+        "--grad-clip-norm",
+        type=float,
+        default=0.0,
+        help="If >0, clip gradient norm after backward (stabilizes training).",
+    )
     args = parser.parse_args()
     ratio_sum = float(args.train_ratio) + float(args.val_ratio) + float(args.test_ratio)
     if abs(ratio_sum - 1.0) > 1e-8:
@@ -260,6 +284,10 @@ def main() -> None:
             f"train/val/test ratios must sum to 1.0, got {ratio_sum:.6f} "
             f"({args.train_ratio}, {args.val_ratio}, {args.test_ratio})."
         )
+    dm = int(args.d_model)
+    nh = int(args.n_heads)
+    if dm % nh != 0:
+        raise SystemExit(f"--d-model ({dm}) must be divisible by --n-heads ({nh}).")
     print(f"Running: {Path(__file__).resolve()}")
     print(f"Parsed --loss: {args.loss!r}  --huber-delta: {args.huber_delta}")
 
@@ -366,23 +394,27 @@ def main() -> None:
         enc_in = enc_in_val
         dec_in = enc_in_val
         c_out = enc_in_val
-        d_model = 128
-        n_heads = 8
-        e_layers = 2
-        d_layers = 1
-        d_ff = 512
+        d_model = int(args.d_model)
+        n_heads = int(args.n_heads)
+        e_layers = int(args.e_layers)
+        d_layers = int(args.d_layers)
+        d_ff = int(args.d_ff)
         factor = 1
-        dropout = 0.05
+        dropout = float(args.dropout)
         embed = "timeF"
         freq = cfg.freq
         activation = "gelu"
         output_attention = False
-        moving_avg = 25
+        moving_avg = int(args.moving_avg)
         distil = True
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     model = Autoformer.Model(_Args()).float().to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    wd = float(args.weight_decay)
+    if wd > 0:
+        optim = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=wd)
+    else:
+        optim = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     loss_name = str(args.loss).lower().strip()
     if loss_name == "mse":
         crit = torch.nn.MSELoss()
@@ -421,7 +453,8 @@ def main() -> None:
     ckpt_dir = (repo_root / args.checkpoints_dir).resolve()
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     setting = (
-        f"panel_Autoformer_ftMS_sl{cfg.seq_len}_ll{cfg.label_len}_pl{cfg.pred_len}_dm128_el2_dl1_"
+        f"panel_Autoformer_ftMS_sl{cfg.seq_len}_ll{cfg.label_len}_pl{cfg.pred_len}_"
+        f"dm{int(args.d_model)}_el{int(args.e_layers)}_dl{int(args.d_layers)}_ma{int(args.moving_avg)}_"
         f"{cfg.target_transform}{huber_suffix}"
     )
     out_path = ckpt_dir / setting
@@ -430,6 +463,16 @@ def main() -> None:
 
     device_name = str(device)
     print(f"Using device: {device_name}")
+    print(
+        f"Model: d_model={int(args.d_model)} n_heads={int(args.n_heads)} "
+        f"e_layers={int(args.e_layers)} d_layers={int(args.d_layers)} d_ff={int(args.d_ff)} "
+        f"dropout={float(args.dropout):g} moving_avg={int(args.moving_avg)}"
+    )
+    opt_name = "AdamW" if wd > 0 else "Adam"
+    print(
+        f"Optim: {opt_name} lr={cfg.lr:g} weight_decay={float(args.weight_decay):g} "
+        f"grad_clip_norm={float(args.grad_clip_norm):g}"
+    )
     print(f"Loss: {loss_name}" + (f" (delta={float(args.huber_delta):g})" if loss_name == "huber" else ""))
     print(f"Early stopping: {'on' if args.early_stop else 'off (full --epochs)'}")
     if sm == "year":
@@ -461,6 +504,9 @@ def main() -> None:
             true = batch_y[:, -cfg.pred_len :, f_dim:].to(device)
             loss = crit(outputs, true)
             loss.backward()
+            gcn = float(args.grad_clip_norm)
+            if gcn > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=gcn)
             optim.step()
             losses.append(float(loss.detach().cpu()))
 

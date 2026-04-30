@@ -11,9 +11,13 @@ appropriate defaults:
 - a longer seq_len than weekly to capture multiple weekly cycles
 
 You can still override any value by passing the corresponding CLI flags.
+
+Precision-oriented defaults (vs weekly entrypoint defaults):
+- Wider model d_model=192, d_ff=768; moving_avg=7 for day-level weekly seasonality in Autoformer decomposition.
+- lr=5e-5 + AdamW weight_decay=1e-4 + grad_clip=1.0 for stable optimization on noisy daily windows.
+- batch-size 24, epochs 40, early-stop patience 12 (longer horizon, stop on val plateau).
 """
 
-import os
 import sys
 from pathlib import Path
 import subprocess
@@ -48,6 +52,27 @@ def main() -> None:
         "42",
         "--pred-len",
         "14",
+        "--lr",
+        "5e-5",
+        "--batch-size",
+        "24",
+        "--epochs",
+        "40",
+        "--early-stop",
+        "--patience",
+        "12",
+        "--d-model",
+        "192",
+        "--d-ff",
+        "768",
+        "--dropout",
+        "0.08",
+        "--moving-avg",
+        "7",
+        "--weight-decay",
+        "1e-4",
+        "--grad-clip-norm",
+        "1.0",
     ]
 
     # Let user override defaults by passing flags after this launcher.

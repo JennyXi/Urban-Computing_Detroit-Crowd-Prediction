@@ -85,6 +85,13 @@ def main() -> None:
     parser.add_argument("--train-end", default="2024-12-31")
     parser.add_argument("--test-start", default="2025-01-01")
     parser.add_argument("--val-weeks", type=int, default=10)
+    parser.add_argument("--d-model", type=int, default=128, help="Must match training checkpoint.")
+    parser.add_argument("--n-heads", type=int, default=8, help="Must match training.")
+    parser.add_argument("--e-layers", type=int, default=2, help="Must match training.")
+    parser.add_argument("--d-layers", type=int, default=1, help="Must match training.")
+    parser.add_argument("--d-ff", type=int, default=512, help="Must match training.")
+    parser.add_argument("--dropout", type=float, default=0.05, help="Must match training.")
+    parser.add_argument("--moving-avg", type=int, default=25, help="Must match training.")
     parser.add_argument(
         "--stamp",
         default=None,
@@ -92,6 +99,10 @@ def main() -> None:
         "Dated outputs are written in addition to the stable filenames.",
     )
     args = parser.parse_args()
+    dm = int(args.d_model)
+    nh = int(args.n_heads)
+    if dm % nh != 0:
+        raise SystemExit(f"--d-model ({dm}) must be divisible by --n-heads ({nh}).")
     ratio_sum = float(args.train_ratio) + float(args.val_ratio) + float(args.test_ratio)
     if abs(ratio_sum - 1.0) > 1e-8:
         raise SystemExit(
@@ -165,18 +176,18 @@ def main() -> None:
         enc_in = enc_in_val
         dec_in = enc_in_val
         c_out = enc_in_val
-        d_model = 128
-        n_heads = 8
-        e_layers = 2
-        d_layers = 1
-        d_ff = 512
+        d_model = int(args.d_model)
+        n_heads = int(args.n_heads)
+        e_layers = int(args.e_layers)
+        d_layers = int(args.d_layers)
+        d_ff = int(args.d_ff)
         factor = 1
-        dropout = 0.05
+        dropout = float(args.dropout)
         embed = "timeF"
         freq = args.freq
         activation = "gelu"
         output_attention = False
-        moving_avg = 25
+        moving_avg = int(args.moving_avg)
         distil = True
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
