@@ -46,6 +46,9 @@ panel_training_0426/checkpoints_*/
 
 # Retraining runs (large / generated)
 weekly_retrained_*/
+# Exception: curated release under POI_Alignment_0429 (tracked for repo)
+!POI_Alignment_0429/weekly_retrained_0430/
+!POI_Alignment_0429/weekly_retrained_0430/**
 
 # Secrets
 .env
