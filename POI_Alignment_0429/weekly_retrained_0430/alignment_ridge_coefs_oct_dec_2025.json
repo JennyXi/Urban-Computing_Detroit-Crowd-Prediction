@@ -1,0 +1,44 @@
+{
+  "date_start": "2025-10-01",
+  "date_end": "2025-12-31",
+  "pred_col": "y_pred_mean",
+  "ridge_alpha": 0.1,
+  "log1p_features": true,
+  "target_log1p": true,
+  "feature_names": [
+    "log1p(poi_cnt_life)",
+    "log1p(poi_cnt_transport)",
+    "log1p(poi_cnt_economy)",
+    "log1p(poi_cnt_public_service)"
+  ],
+  "coef_scaled_input": [
+    0.10810293351039757,
+    0.3524497497911656,
+    0.15387980354258732,
+    0.0
+  ],
+  "intercept": 10.095592200749998,
+  "scaler_mean": [
+    0.24613500426567236,
+    0.027725887222397813,
+    0.08435549202375726,
+    0.0
+  ],
+  "scaler_scale": [
+    0.4019842552008286,
+    0.13582855272165328,
+    0.24548706979048734,
+    1.0
+  ],
+  "fit_metrics": {
+    "rmse": 47521.10293170711,
+    "mae": 18715.335334025054,
+    "medae": 5988.49621628355,
+    "mape": 0.4125712310049146,
+    "smape": 0.3873236920847915,
+    "r2": 0.31538868316179147
+  },
+  "n_grids": 100,
+  "pred_csv": "E:\\Urban Computing Final Project\\Try_0412\\POI_Alignment_0429\\weekly_retrained_0429\\panel_pred_test_2025_by_date.csv",
+  "poi_parquet": "E:\\Urban Computing Final Project\\Try_0412\\POI_Alignment_0429\\grid100_poi_static_2024.parquet"
+}
