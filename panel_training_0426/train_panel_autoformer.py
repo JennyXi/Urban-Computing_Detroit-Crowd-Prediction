@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ class PanelWindows(Dataset):
         grid_ids: list[str],
         split: str,
         cfg: PanelConfig,
-        scaler: StandardScaler | None = None,
+        per_grid_scalers: dict[str, StandardScaler] | None = None,
         time_features_fn=None,
         *,
         split_mode: str = "ratio",
@@ -139,25 +140,32 @@ class PanelWindows(Dataset):
                 for g0 in g0s:
                     self.indices.append((gid, int(g0)))
 
-        # Fit/attach scaler on train partition only (matches Dataset_Custom spirit but across all grids)
-        if scaler is None:
-            scaler = StandardScaler()
-            train_rows = []
+        # Per-grid StandardScaler fit on that grid's train partition only (avoids high-traffic grids
+        # dominating the global mean/std and crushing low-traffic series in one shared scaler).
+        if per_grid_scalers is None:
+            self.per_grid_scalers: dict[str, StandardScaler] = {}
             if split_mode == "ratio":
                 for gid, g in self.series.items():
                     n = len(g)
                     num_train = int(round(n * float(train_ratio)))
-                    # fit on [0:num_train]
-                    train_rows.append(g.loc[: num_train - 1, self.cols_data])
+                    if num_train <= 0:
+                        num_train = min(1, n)
+                    tr = g.loc[: num_train - 1, self.cols_data]
+                    s = StandardScaler()
+                    s.fit(tr.to_numpy(dtype=np.float32))
+                    self.per_grid_scalers[gid] = s
             else:
-                # fit scaler only on rows whose date <= train_end (never touch 2025 values)
                 te = pd.Timestamp(train_end).normalize()
-                for _gid, g in self.series.items():
+                for gid, g in self.series.items():
                     mask = pd.to_datetime(g["date"]).dt.normalize() <= te
-                    train_rows.append(g.loc[mask, self.cols_data])
-            train_mat = pd.concat(train_rows, ignore_index=True).to_numpy(dtype=np.float32)
-            scaler.fit(train_mat)
-        self.scaler = scaler
+                    tr = g.loc[mask, self.cols_data]
+                    if len(tr) == 0:
+                        raise SystemExit(f"No train rows (date<=train_end) for grid_id={gid!r}; cannot fit scaler.")
+                    s = StandardScaler()
+                    s.fit(tr.to_numpy(dtype=np.float32))
+                    self.per_grid_scalers[gid] = s
+        else:
+            self.per_grid_scalers = per_grid_scalers
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -172,7 +180,7 @@ class PanelWindows(Dataset):
 
         # scaled numeric data (covariates+OT)
         mat = g.loc[:, self.cols_data].to_numpy(dtype=np.float32)
-        mat = self.scaler.transform(mat).astype(np.float32)
+        mat = self.per_grid_scalers[gid].transform(mat).astype(np.float32)
 
         batch_x = mat[s_begin:s_end]
         batch_y = mat[r_begin:r_end]
@@ -277,6 +285,11 @@ def main() -> None:
         default=0.0,
         help="If >0, clip gradient norm after backward (stabilizes training).",
     )
+    parser.add_argument(
+        "--metrics-json",
+        default=None,
+        help="Optional path (relative to repo root) to write best val loss, setting, and epochs as JSON.",
+    )
     args = parser.parse_args()
     ratio_sum = float(args.train_ratio) + float(args.val_ratio) + float(args.test_ratio)
     if abs(ratio_sum - 1.0) > 1e-8:
@@ -330,7 +343,7 @@ def main() -> None:
         grid_ids=grid_ids,
         split="train",
         cfg=cfg,
-        scaler=None,
+        per_grid_scalers=None,
         time_features_fn=time_features,
         split_mode=sm,
         train_end=str(args.train_end),
@@ -340,13 +353,13 @@ def main() -> None:
         val_ratio=float(args.val_ratio),
         test_ratio=float(args.test_ratio),
     )
-    scaler = train_ds.scaler
+    per_grid_scalers = train_ds.per_grid_scalers
     val_ds = PanelWindows(
         df=df,
         grid_ids=grid_ids,
         split="val",
         cfg=cfg,
-        scaler=scaler,
+        per_grid_scalers=per_grid_scalers,
         time_features_fn=time_features,
         split_mode=sm,
         train_end=str(args.train_end),
@@ -361,7 +374,7 @@ def main() -> None:
         grid_ids=grid_ids,
         split="test",
         cfg=cfg,
-        scaler=scaler,
+        per_grid_scalers=per_grid_scalers,
         time_features_fn=time_features,
         split_mode=sm,
         train_end=str(args.train_end),
@@ -449,13 +462,14 @@ def main() -> None:
 
     # Training loop; optional early stopping on val loss (--early-stop)
     best_val = math.inf
+    best_epoch = 0
     bad = 0
     ckpt_dir = (repo_root / args.checkpoints_dir).resolve()
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     setting = (
         f"panel_Autoformer_ftMS_sl{cfg.seq_len}_ll{cfg.label_len}_pl{cfg.pred_len}_"
         f"dm{int(args.d_model)}_el{int(args.e_layers)}_dl{int(args.d_layers)}_ma{int(args.moving_avg)}_"
-        f"{cfg.target_transform}{huber_suffix}"
+        f"{cfg.target_transform}{huber_suffix}_pgs"
     )
     out_path = ckpt_dir / setting
     out_path.mkdir(parents=True, exist_ok=True)
@@ -516,6 +530,7 @@ def main() -> None:
 
         if val_loss < best_val:
             best_val = val_loss
+            best_epoch = epoch + 1
             bad = 0
             torch.save(model.state_dict(), ckpt_path)
         else:
@@ -524,9 +539,32 @@ def main() -> None:
                 print("Early stopping.")
                 break
 
+    epochs_run = epoch + 1
+    print(f"Best val_loss: {best_val:.6f}  (epoch {best_epoch})  epochs_run: {epochs_run}")
     print(f"Saved checkpoint: {ckpt_path}")
     print(f"Setting: {setting}")
     print(f"Train samples: {len(train_ds)}  Val samples: {len(val_ds)}  Test samples: {len(test_ds)}")
+
+    if args.metrics_json:
+        mpath = (repo_root / str(args.metrics_json)).resolve()
+        mpath.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "setting": setting,
+            "best_val_loss": float(best_val),
+            "best_epoch": int(best_epoch),
+            "epochs_run": int(epochs_run),
+            "checkpoint": str(ckpt_path),
+            "panel_csv": str(panel_path),
+            "lr": float(cfg.lr),
+            "d_model": int(args.d_model),
+            "d_ff": int(args.d_ff),
+            "dropout": float(args.dropout),
+            "weight_decay": float(args.weight_decay),
+            "loss": str(args.loss),
+            "huber_delta": float(args.huber_delta),
+        }
+        mpath.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Wrote metrics: {mpath}")
 
 
 if __name__ == "__main__":

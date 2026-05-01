@@ -51,6 +51,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build a panel daily dataset (Top-K grids) for shared Autoformer training.")
     parser.add_argument("--input", default="data/grid100_daily_2024_2025.parquet", help="Grid daily parquet (long).")
     parser.add_argument("--out-dir", default="panel_training_0426/outputs", help="Output directory.")
+    parser.add_argument(
+        "--poi-static",
+        default="",
+        help="Optional grid-level static POI indices parquet to merge by grid_id. "
+        "Example: data/grid100_poi_static_2024.parquet (built from scripts/build_grid_poi_static.py).",
+    )
     parser.add_argument("--top-k", type=int, default=100)
     parser.add_argument("--date-start", default="2024-01-01")
     parser.add_argument("--date-end", default="2025-12-31")
@@ -112,6 +118,25 @@ def main() -> None:
     if df.empty:
         raise SystemExit("No rows after date filter.")
 
+    # Optional: merge static POI indices by grid_id (supply-side features)
+    poi_path_str = str(args.poi_static).strip()
+    poi_static: pd.DataFrame | None = None
+    poi_cols: list[str] = []
+    if poi_path_str:
+        poi_path = (repo_root / poi_path_str).resolve()
+        if not poi_path.exists():
+            raise SystemExit(f"Missing --poi-static parquet: {poi_path}")
+        poi_static = pq.read_table(poi_path).to_pandas()
+        if "grid_id" not in poi_static.columns:
+            raise SystemExit("--poi-static must contain column grid_id.")
+        poi_static["grid_id"] = poi_static["grid_id"].astype(str)
+        drop = {"grid_id", "gx", "gy"}
+        poi_cols = [c for c in poi_static.columns if c not in drop]
+        if not poi_cols:
+            raise SystemExit("--poi-static has no feature columns besides grid_id/gx/gy.")
+        for c in poi_cols:
+            poi_static[c] = pd.to_numeric(poi_static[c], errors="coerce").fillna(0.0).astype(np.float64)
+
     # Rank Top-K by total visits in specified year
     rank_year = int(args.topk_year)
     y0 = pd.Timestamp(f"{rank_year}-01-01")
@@ -154,6 +179,16 @@ def main() -> None:
         cell_lon = float(g0["cell_lon"].iloc[0])
         cell_lat = float(g0["cell_lat"].iloc[0])
 
+        # Attach static POI indices (if provided)
+        poi_feat: dict[str, float] = {}
+        if poi_static is not None and poi_cols:
+            hit = poi_static[poi_static["grid_id"] == str(grid_id)]
+            if len(hit) > 0:
+                r0 = hit.iloc[0]
+                poi_feat = {c: float(r0[c]) for c in poi_cols}
+            else:
+                poi_feat = {c: 0.0 for c in poi_cols}
+
         g = g0.set_index("date").reindex(all_days)
         g["grid_id"] = str(grid_id)
         g["gx"] = gx
@@ -169,6 +204,9 @@ def main() -> None:
             g["is_weekend"] = weekend_series.astype(np.float64)
 
         g = g.reset_index().rename(columns={"index": "date"})
+
+        for k, v in poi_feat.items():
+            g[k] = float(v)
         grid_series[str(grid_id)] = g
 
     # Spatial neighbor covariates (8-neighborhood)
@@ -257,6 +295,10 @@ def main() -> None:
                 "std_visits_2024": float(std_2024),
                 "total_visits_2024": float(total_2024),
             }
+            # static POI indices (if enabled)
+            if poi_static is not None and poi_cols:
+                for c in poi_cols:
+                    row[c] = float(g[c].iloc[i])
             if city_cov_name is not None:
                 row[city_cov_name] = float(g[city_cov_name].iloc[i])
             for nm in weekend_cov_names:

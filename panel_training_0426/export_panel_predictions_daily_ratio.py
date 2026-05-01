@@ -1,15 +1,10 @@
 from __future__ import annotations
 
 """
-Daily prediction export launcher matching the daily ratio training defaults.
+Daily prediction export launcher matching `train_panel_autoformer_daily_ratio.py`.
 
-This reuses `export_panel_predictions.py` but sets daily-appropriate defaults:
-- freq = "d"
-- split-mode = "ratio" with 0.7/0.15/0.15
-- seq/label/pred match `train_panel_autoformer_daily_ratio.py`
-- target-year defaults to 2025
-
-You can override any value by passing the corresponding CLI flags.
+Defaults: year split (2024 train/val, 2025 test), same seq/label/pred and model dims as training.
+Override with CLI flags if you trained with ratio split or different panel.
 """
 
 import os
@@ -26,30 +21,34 @@ def main() -> None:
 
     default_args = [
         str(export_py),
+        "--checkpoints-dir",
+        "daily_training_0430/checkpoints",
+        "--out-dir",
+        "daily_training_0430",
         "--panel-csv",
         "panel_training_0426/outputs/panel_daily_top100_2024_2025_topk2024_city_lag1_wk_is_weekend_sp_nbr8_std_lag1_log1p.csv",
         "--freq",
         "d",
         "--split-mode",
-        "ratio",
-        "--train-ratio",
-        "0.7",
-        "--val-ratio",
-        "0.15",
-        "--test-ratio",
-        "0.15",
+        "year",
+        "--train-end",
+        "2024-12-31",
+        "--test-start",
+        "2025-01-01",
+        "--val-weeks",
+        "10",
         "--seq-len",
         "84",
         "--label-len",
         "42",
         "--pred-len",
-        "14",
+        "7",
         "--d-model",
-        "192",
+        "256",
         "--d-ff",
-        "768",
+        "1024",
         "--dropout",
-        "0.08",
+        "0.12",
         "--moving-avg",
         "7",
         "--target-year",

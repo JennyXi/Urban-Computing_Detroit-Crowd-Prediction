@@ -145,9 +145,10 @@ def main() -> None:
     f_dim = -1
 
     sm = str(args.split_mode)
-    # Fit scaler on train portion across all grids
-    mats = []
+    # Per-grid scaler fit on each grid's train slice only (must match train_panel_autoformer.PanelWindows).
+    per_grid_scalers: dict[str, StandardScaler] = {}
     for gid, g in df.groupby("grid_id", sort=False):
+        gid = str(gid)
         g = g.sort_values("date").reset_index(drop=True)
         n = len(g)
         if sm == "ratio":
@@ -159,14 +160,17 @@ def main() -> None:
                 float(args.val_ratio),
                 float(args.test_ratio),
             )
-            mats.append(g.loc[border1s[0] : border2s[0] - 1, cols_data])
+            tr = g.loc[border1s[0] : border2s[0] - 1, cols_data]
         else:
             _tr, _va, _te, end_excl = _year_split_g0s(
                 g["date"], int(args.seq_len), int(args.pred_len), str(args.train_end), str(args.test_start), int(args.val_weeks)
             )
-            mats.append(g.loc[: end_excl - 1, cols_data])
-    scaler = StandardScaler()
-    scaler.fit(pd.concat(mats, ignore_index=True).to_numpy(dtype=np.float32))
+            tr = g.loc[: end_excl - 1, cols_data]
+        if len(tr) == 0:
+            raise SystemExit(f"No train rows to fit scaler for grid_id={gid!r}.")
+        s = StandardScaler()
+        s.fit(tr.to_numpy(dtype=np.float32))
+        per_grid_scalers[gid] = s
 
     class _Args:
         seq_len = int(args.seq_len)
@@ -205,6 +209,7 @@ def main() -> None:
     rows = []
     with torch.no_grad():
         for gid, g in df.groupby("grid_id", sort=False):
+            gid = str(gid)
             g = g.sort_values("date").reset_index(drop=True)
             n = len(g)
             if sm == "ratio":
@@ -238,7 +243,8 @@ def main() -> None:
                 if not g0_list:
                     continue
 
-            mat = scaler.transform(g.loc[:, cols_data].to_numpy(dtype=np.float32)).astype(np.float32)
+            gs = per_grid_scalers[gid]
+            mat = gs.transform(g.loc[:, cols_data].to_numpy(dtype=np.float32)).astype(np.float32)
             stamps = time_features(pd.to_datetime(g["date"].values), freq=args.freq).transpose(1, 0).astype(np.float32)
 
             for i, g0 in enumerate(g0_list):
@@ -260,9 +266,9 @@ def main() -> None:
                 # inverse transform OT only
                 dummy = np.zeros((args.pred_len, enc_in_val), dtype=np.float32)
                 dummy[:, -1] = out
-                inv_out = scaler.inverse_transform(dummy)[:, -1]
+                inv_out = gs.inverse_transform(dummy)[:, -1]
                 dummy[:, -1] = true
-                inv_true = scaler.inverse_transform(dummy)[:, -1]
+                inv_true = gs.inverse_transform(dummy)[:, -1]
 
                 if args.target_transform == "log1p":
                     inv_out = np.expm1(inv_out)
